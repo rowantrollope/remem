@@ -610,12 +610,59 @@ The `filter` parameter supports Redis VectorSet filter syntax:
 
 The new API provides cleaner, more RESTful endpoints with better separation of concerns between developer operations and chat applications.
 
-### Testing
+## Configuration Management
 
-Run the test script to verify everything works:
+The system now includes a comprehensive **Configuration Management API** that allows runtime configuration of all system components:
+
+### Configuration API Endpoints
+
+- **GET /api/config** - Get current system configuration
+- **PUT /api/config** - Update configuration settings
+- **POST /api/config/test** - Test configuration changes without applying them
+- **POST /api/config/reload** - Reload configuration and restart memory agent
+
+### Configurable Components
+
+- **Redis**: host, port, database, vector set name
+- **OpenAI**: API key, models, temperature, embedding settings
+- **LangGraph**: model selection, temperature, system prompts
+- **Memory Agent**: search parameters, grounding settings, validation
+- **Web Server**: host, port, debug mode, CORS settings
+
+### Example: Change Redis Server
 
 ```bash
+curl -X PUT http://localhost:5001/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "redis": {
+      "host": "redis.example.com",
+      "port": 6379,
+      "db": 1
+    }
+  }'
+
+# Test the configuration first
+curl -X POST http://localhost:5001/api/config/test \
+  -H "Content-Type: application/json" \
+  -d '{"redis": {"host": "redis.example.com", "port": 6379}}'
+
+# Apply changes
+curl -X POST http://localhost:5001/api/config/reload
+```
+
+See [CONFIG_API.md](CONFIG_API.md) for complete documentation and examples.
+
+### Testing
+
+Run the test scripts to verify everything works:
+
+```bash
+# Test core memory functionality
 python test_memory_agent.py
+
+# Test configuration management API
+python test_config_api.py
 ```
 
 See `setup_redis.md` for detailed Redis setup instructions.

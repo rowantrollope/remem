@@ -41,9 +41,12 @@ def test_memory_agent():
         
         memory_ids = []
         for memory in test_memories:
-            memory_id = agent.store_memory(memory)
+            storage_result = agent.store_memory(memory)
+            memory_id = storage_result['memory_id']
             memory_ids.append(memory_id)
             print(f"   ✅ Stored: {memory}")
+            if storage_result['grounding_applied']:
+                print(f"      🌍 Grounded: {storage_result['final_text']}")
         
         # Test searching memories
         print("\n🔍 Testing memory search...")

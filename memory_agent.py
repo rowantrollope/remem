@@ -10,6 +10,7 @@ pip install redis>=5.0.0 openai>=1.0.0 python-dotenv>=1.0.0 numpy>=1.24.0
 Prerequisites:
 - Redis server running with RedisSearch module (Redis Stack or Redis with RediSearch)
 - OpenAI API key in environment variables or .env file
+- Optional: Redis connection details in .env file (REDIS_HOST, REDIS_PORT, REDIS_DB)
 
 Usage:
 python memory_agent.py
@@ -35,14 +36,18 @@ load_dotenv()
 class MemoryAgent:
     """A memory agent that stores and retrieves memories using Redis and OpenAI embeddings."""
     
-    def __init__(self, redis_host: str = "localhost", redis_port: int = 6381, redis_db: int = 0):
+    def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None):
         """Initialize the memory agent.
 
         Args:
-            redis_host: Redis server host
-            redis_port: Redis server port
-            redis_db: Redis database number
+            redis_host: Redis server host (defaults to REDIS_HOST env var or "localhost")
+            redis_port: Redis server port (defaults to REDIS_PORT env var or 6379)
+            redis_db: Redis database number (defaults to REDIS_DB env var or 0)
         """
+        # Get Redis connection details from environment variables with fallbacks
+        redis_host = redis_host or os.getenv("REDIS_HOST", "localhost")
+        redis_port = redis_port or int(os.getenv("REDIS_PORT", "6379"))
+        redis_db = redis_db or int(os.getenv("REDIS_DB", "0"))
         # Initialize OpenAI client
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -369,7 +374,7 @@ Respond with a JSON object:
                 "error": str(e)
             }
 
-    def store_memory(self, memory_text: str, apply_grounding: bool = True) -> str:
+    def store_memory(self, memory_text: str, apply_grounding: bool = True) -> Dict[str, Any]:
         """Store a memory using VectorSet with optional contextual grounding.
 
         Args:
@@ -377,7 +382,12 @@ Respond with a JSON object:
             apply_grounding: Whether to apply contextual grounding to resolve context-dependent references
 
         Returns:
-            The UUID of the stored memory
+            Dictionary containing:
+            - memory_id: The UUID of the stored memory
+            - original_text: The original memory text (after parsing)
+            - final_text: The final stored text (grounded or original)
+            - grounding_applied: Whether grounding was applied
+            - grounding_info: Details about grounding changes (if applied)
         """
         print(f"🧠 Storing memory: {memory_text}")
 
@@ -464,7 +474,30 @@ Respond with a JSON object:
             print(f"   Tags: {tags}")
             print(f"   Timestamp: {datetime.fromtimestamp(timestamp)}")
 
-            return memory_id
+            # Return structured response with grounding information
+            response = {
+                "memory_id": memory_id,
+                "original_text": cleaned_text,
+                "final_text": final_text,
+                "grounding_applied": grounding_result is not None and grounding_result.get("grounding_applied", False),
+                "tags": tags,
+                "timestamp": timestamp,
+                "formatted_time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+            }
+
+            # Add grounding information if available
+            if grounding_result:
+                response["grounding_info"] = {
+                    "dependencies_found": grounding_result.get("dependencies_resolved", {}),
+                    "changes_made": grounding_result.get("changes_made", []),
+                    "unresolved_references": grounding_result.get("unresolved_references", [])
+                }
+
+                # Include context snapshot if grounding was applied
+                if grounding_result.get("grounding_applied"):
+                    response["context_snapshot"] = self._get_current_context()
+
+            return response
 
         except Exception as e:
             print(f"❌ Error storing memory: {e}")
@@ -651,6 +684,73 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
                 "content": user_input
             }
 
+    def _filter_relevant_memories(self, question: str, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter memories by relevance using LLM as judge.
+
+        Args:
+            question: The original question being asked
+            memories: List of memories from vector search
+
+        Returns:
+            List of memories that are actually relevant to the question
+        """
+        if not memories:
+            return memories
+
+        print(f"🔍 Filtering {len(memories)} memories for relevance to: {question}")
+
+        relevant_memories = []
+
+        for memory in memories:
+            relevance_prompt = f"""You are a relevance judge. Your task is to determine if a memory contains information that could help answer a specific question.
+
+Question: {question}
+
+Memory: {memory['text']}
+
+Instructions:
+1. Analyze if this memory contains ANY information that could help answer the question
+2. Consider both direct and indirect relevance
+3. Be strict - only consider it relevant if it actually relates to what's being asked
+4. Respond with ONLY "RELEVANT" or "NOT_RELEVANT" followed by a brief reason
+
+Examples:
+- Question: "When are my kids' birthdays?" Memory: "My daughter is Penelope" → NOT_RELEVANT (mentions daughter but no birthday information)
+- Question: "When are my kids' birthdays?" Memory: "Emma's birthday is March 15th" → RELEVANT (directly answers the question)
+- Question: "What did I eat yesterday?" Memory: "Had pizza for dinner on Tuesday" → RELEVANT (if today is Wednesday)
+
+Your response:"""
+
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "user", "content": relevance_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=100
+                )
+
+                relevance_result = response.choices[0].message.content.strip()
+                print(f"   Memory relevance check: {relevance_result[:50]}...")
+
+                if relevance_result.startswith("RELEVANT"):
+                    # Add relevance reasoning to memory metadata
+                    memory["relevance_reasoning"] = relevance_result[8:].strip() if len(relevance_result) > 8 else "Deemed relevant"
+                    relevant_memories.append(memory)
+                    print(f"   ✅ Memory kept: {memory['text'][:50]}...")
+                else:
+                    print(f"   ❌ Memory filtered out: {memory['text'][:50]}...")
+
+            except Exception as e:
+                print(f"   ⚠️ Error in relevance check, keeping memory: {e}")
+                # If relevance check fails, keep the memory to be safe
+                memory["relevance_reasoning"] = "Relevance check failed, kept by default"
+                relevant_memories.append(memory)
+
+        print(f"🔍 Relevance filtering: {len(memories)} → {len(relevant_memories)} memories")
+        return relevant_memories
+
     def answer_question(self, question: str, top_k: int = 5, filterBy: str = None) -> Dict[str, Any]:
         """Answer a question using relevant memories and OpenAI.
 
@@ -697,45 +797,67 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
                 "supporting_memories": []
             }
 
-        # Prepare context from memories
+        # Filter memories for relevance using LLM as judge
+        relevant_memories = self._filter_relevant_memories(question, memories)
+
+        if not relevant_memories:
+            return {
+                "type": "answer",
+                "answer": "I found some memories but none of them contain information relevant to your question.",
+                "confidence": "low",
+                "supporting_memories": [],
+                "filtered_count": len(memories)
+            }
+
+        # Prepare context from relevant memories
         memory_context = []
-        for i, memory in enumerate(memories, 1):
+        for i, memory in enumerate(relevant_memories, 1):
             score_percent = memory["score"] * 100
+            relevance_note = f" (Relevance: {memory.get('relevance_reasoning', 'N/A')})" if memory.get('relevance_reasoning') else ""
             memory_context.append(
-                f"Memory {i} ({score_percent:.1f}% relevant, from {memory['formatted_time']}): {memory['text']}"
+                f"Memory {i} ({score_percent:.1f}% similarity, from {memory['formatted_time']}): {memory['text']}{relevance_note}"
             )
 
         context_text = "\n".join(memory_context)
 
-        # Create a prompt for OpenAI
-        system_prompt = """You are a helpful AI assistant that answers questions based on provided memories.
+        # Create enhanced system prompt for strict confidence analysis
+        system_prompt = """You are an expert memory analyst with a focus on accuracy and preventing hallucination. Your job is to answer questions based ONLY on the information explicitly provided in the memories.
+
+CRITICAL INSTRUCTIONS:
+1. Only use information that is explicitly stated in the memories
+2. Do NOT infer, assume, or extrapolate beyond what is directly stated
+3. If memories don't contain sufficient information to answer the question, be honest about it
+4. Be extremely conservative with confidence levels
+5. The memories have already been filtered for relevance, but still verify they actually answer the question
 
 Your task is to analyze the provided memories and respond with a JSON object containing:
-1. "answer": A clear, direct answer to the question
-2. "confidence": One of "high", "medium", or "low" based on how well the memories answer the question
-3. "reasoning": Brief explanation of your confidence level and which memories support your answer
+1. "answer": A clear, direct answer based ONLY on explicit information in memories, or state what information is missing
+2. "confidence": One of "high", "medium", or "low" based on how directly the memories answer the question
+3. "reasoning": Detailed explanation of your confidence level and exactly which memories support your answer
 
-Confidence levels:
-- "high": Memories directly and clearly answer the question with specific, relevant information
-- "medium": Memories provide good information but may be incomplete or somewhat indirect
-- "low": Memories are tangentially related or don't provide enough information to answer confidently
+STRICT Confidence levels:
+- "high": Memories contain explicit, direct, and complete information that fully answers the question
+- "medium": Memories contain some relevant information but may be incomplete or require minor interpretation
+- "low": Memories are related but don't contain enough explicit information to answer the question confidently, OR no memories are truly relevant
+
+IMPORTANT: If the memories don't actually answer the question, say so clearly. Don't try to piece together an answer from unrelated information.
 
 Your response must be valid JSON in this exact format:
 {
-  "answer": "Direct answer to the question",
+  "answer": "Direct answer based only on explicit memory content, or explanation of what information is missing",
   "confidence": "high|medium|low",
-  "reasoning": "Brief explanation of confidence and which memories support this answer"
+  "reasoning": "Detailed explanation citing specific memories and why confidence level was chosen"
 }
 
-Be concise but informative. Focus on answering the question directly."""
+Be honest and conservative. It's better to say "I don't have enough information" than to hallucinate an answer."""
 
         # Use the original question in the prompt to maintain user context
         user_prompt = f"""Question: {question}
 
-Available memories:
+Available memories (already filtered for relevance):
 {context_text}
 
-Please answer the question based on these memories, including appropriate confidence indicators."""
+Please answer the question based ONLY on these memories. If the memories don't contain sufficient information to answer the question, be honest about it. Do not make assumptions or inferences beyond what is explicitly stated."""
 
         try:
             # Call OpenAI to generate the answer
@@ -750,21 +872,22 @@ Please answer the question based on these memories, including appropriate confid
             )
 
             ai_response = response.choices[0].message.content.strip()
-            print(f"✅ Generated answer with {len(memories)} memory context(s)")
+            print(f"✅ Generated answer with {len(relevant_memories)} relevant memory context(s) (filtered from {len(memories)} total)")
 
             # Parse the JSON response from OpenAI
             try:
                 ai_json = json.loads(ai_response)
 
-                # Prepare supporting memories list with citations
+                # Prepare supporting memories list with citations (only relevant memories)
                 supporting_memories = []
-                for i, memory in enumerate(memories, 1):
+                for i, memory in enumerate(relevant_memories, 1):
                     supporting_memories.append({
                         "id": memory["id"],
                         "text": memory["text"],
                         "relevance_score": round(memory["score"] * 100, 1),
                         "timestamp": memory["formatted_time"],
-                        "tags": memory["tags"]
+                        "tags": memory["tags"],
+                        "relevance_reasoning": memory.get("relevance_reasoning", "N/A")
                     })
 
                 return {
@@ -772,40 +895,47 @@ Please answer the question based on these memories, including appropriate confid
                     "answer": ai_json.get("answer", "Unable to parse answer"),
                     "confidence": ai_json.get("confidence", "low"),
                     "reasoning": ai_json.get("reasoning", ""),
-                    "supporting_memories": supporting_memories
+                    "supporting_memories": supporting_memories,
+                    "total_memories_searched": len(memories),
+                    "relevant_memories_used": len(relevant_memories)
                 }
 
             except json.JSONDecodeError as e:
                 print(f"⚠️ Failed to parse JSON response from OpenAI: {e}")
                 print(f"Raw response: {ai_response}")
 
-                # Fallback: return the raw response in our structure
+                # Fallback: return the raw response in our structure (use relevant memories)
                 supporting_memories = []
-                for i, memory in enumerate(memories, 1):
+                for i, memory in enumerate(relevant_memories, 1):
                     supporting_memories.append({
                         "id": memory["id"],
                         "text": memory["text"],
                         "relevance_score": round(memory["score"] * 100, 1),
                         "timestamp": memory["formatted_time"],
-                        "tags": memory["tags"]
+                        "tags": memory["tags"],
+                        "relevance_reasoning": memory.get("relevance_reasoning", "N/A")
                     })
 
                 return {
                     "type": "answer",
                     "answer": ai_response,
-                    "confidence": "medium",
+                    "confidence": "low",  # Lower confidence due to parsing failure
                     "reasoning": "Response format could not be parsed",
-                    "supporting_memories": supporting_memories
+                    "supporting_memories": supporting_memories,
+                    "total_memories_searched": len(memories),
+                    "relevant_memories_used": len(relevant_memories)
                 }
 
         except Exception as e:
             print(f"❌ Error generating answer: {e}")
             return {
                 "type": "answer",
-                "answer": f"I found {len(memories)} relevant memories but couldn't generate an answer due to an error: {str(e)}",
+                "answer": f"I found {len(relevant_memories)} relevant memories (from {len(memories)} searched) but couldn't generate an answer due to an error: {str(e)}",
                 "confidence": "low",
                 "reasoning": "Error occurred during answer generation",
-                "supporting_memories": []
+                "supporting_memories": [],
+                "total_memories_searched": len(memories),
+                "relevant_memories_used": len(relevant_memories)
             }
 
     def get_memory_info(self) -> Dict[str, Any]:
@@ -1007,7 +1137,8 @@ def main():
                     memory_text = memory_text[1:-1]
 
                 if memory_text:
-                    agent.store_memory(memory_text, apply_grounding=False)
+                    storage_result = agent.store_memory(memory_text, apply_grounding=False)
+                    print(f"✅ Stored memory with ID: {storage_result['memory_id']}")
                 else:
                     print("❌ Please provide memory text after 'remember-raw'")
 
@@ -1017,7 +1148,15 @@ def main():
                     memory_text = memory_text[1:-1]
 
                 if memory_text:
-                    agent.store_memory(memory_text, apply_grounding=True)
+                    storage_result = agent.store_memory(memory_text, apply_grounding=True)
+                    print(f"✅ Stored memory with ID: {storage_result['memory_id']}")
+                    if storage_result['grounding_applied']:
+                        print(f"🌍 Grounding applied:")
+                        print(f"   Original: {storage_result['original_text']}")
+                        print(f"   Grounded: {storage_result['final_text']}")
+                        if 'grounding_info' in storage_result and storage_result['grounding_info']['changes_made']:
+                            changes = storage_result['grounding_info']['changes_made']
+                            print(f"   Changes: {len(changes)} modifications made")
                 else:
                     print("❌ Please provide memory text after 'remember'")
             

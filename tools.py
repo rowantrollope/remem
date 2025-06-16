@@ -30,8 +30,19 @@ def store_memory(memory_text: str, apply_grounding: bool = True) -> str:
         return "Error: Memory agent not initialized"
 
     try:
-        memory_id = _memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
-        return f"Successfully stored memory with ID: {memory_id}"
+        storage_result = _memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
+        memory_id = storage_result['memory_id']
+
+        # Create a detailed response message
+        message = f"Successfully stored memory with ID: {memory_id}"
+        if storage_result['grounding_applied']:
+            message += f"\nOriginal: {storage_result['original_text']}"
+            message += f"\nGrounded: {storage_result['final_text']}"
+            if 'grounding_info' in storage_result and storage_result['grounding_info']['changes_made']:
+                changes = storage_result['grounding_info']['changes_made']
+                message += f"\nChanges made: {len(changes)} grounding modifications"
+
+        return message
     except Exception as e:
         return f"Error storing memory: {str(e)}"
 
