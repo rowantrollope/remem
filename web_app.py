@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
-from memory_agent import MemoryAgent
+from langgraph_memory_agent import LangGraphMemoryAgent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -19,13 +19,13 @@ CORS(app)  # Enable CORS for all routes
 memory_agent = None
 
 def init_memory_agent():
-    """Initialize the memory agent."""
+    """Initialize the LangGraph memory agent."""
     global memory_agent
     try:
-        memory_agent = MemoryAgent()
+        memory_agent = LangGraphMemoryAgent()
         return True
     except Exception as e:
-        print(f"Failed to initialize memory agent: {e}")
+        print(f"Failed to initialize LangGraph memory agent: {e}")
         return False
 
 @app.route('/')
@@ -33,54 +33,83 @@ def index():
     """Main page."""
     return render_template('index.html')
 
-@app.route('/api/remember', methods=['POST'])
-def api_remember():
-    """API endpoint to store a memory."""
+# =============================================================================
+# DEVELOPER MEMORY APIs - Core memory operations for agent developers
+# =============================================================================
+
+@app.route('/api/memory', methods=['POST'])
+def api_store_memory():
+    """Store a new memory.
+
+    Body:
+        text (str): Memory text to store
+        apply_grounding (bool, optional): Whether to apply contextual grounding (default: true)
+
+    Returns:
+        JSON with success status, memory_id, and message
+    """
     try:
         data = request.get_json()
-        memory_text = data.get('memory', '').strip()
+
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        memory_text = data.get('text', '').strip()
         apply_grounding = data.get('apply_grounding', True)
 
         if not memory_text:
             return jsonify({'error': 'Memory text is required'}), 400
 
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+        print(f"📝 Storing memory: {memory_text}")
+        print(f"🔧 Apply grounding: {apply_grounding}")
 
-        memory_id = memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
+        # Use the underlying memory agent for storage operations
+        memory_id = memory_agent.memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
 
         return jsonify({
             'success': True,
             'memory_id': memory_id,
-            'message': 'Memory stored successfully',
-            'grounding_applied': apply_grounding
+            'message': 'Memory stored successfully'
         })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/recall', methods=['POST'])
-def api_recall():
-    """API endpoint to search memories."""
+@app.route('/api/memory/search', methods=['POST'])
+def api_search_memories():
+    """Search memories using vector similarity.
+
+    Body:
+        query (str): Search query text
+        top_k (int, optional): Number of results to return (default: 5)
+        filter (str, optional): Filter expression for Redis VSIM command
+
+    Returns:
+        JSON with success status, memories array, and count
+    """
     try:
         data = request.get_json()
-        query = data.get('query', '').strip()
-        top_k = data.get('top_k', 3)
-        filterBy = data.get('filterBy')
-
-        if not query:
-            return jsonify({'error': 'Query is required'}), 400
 
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        if filterBy:
-            print(f"🔍 Recall with filter: {filterBy}")
+        query = data.get('query', '').strip()
+        top_k = data.get('top_k', 5)
+        filter_expr = data.get('filter')
 
-        memories = memory_agent.search_memories(query, top_k, filterBy)
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
+
+        print(f"🔍 Searching memories: {query} (top_k: {top_k})")
+        if filter_expr:
+            print(f"🔍 Filter: {filter_expr}")
+
+        # Use the underlying memory agent for search operations
+        memories = memory_agent.memory_agent.search_memories(query, top_k, filter_expr)
 
         return jsonify({
             'success': True,
+            'query': query,
             'memories': memories,
             'count': len(memories)
         })
@@ -88,27 +117,41 @@ def api_recall():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/ask', methods=['POST'])
-def api_ask():
-    """API endpoint to ask a question."""
+@app.route('/api/memory/answer', methods=['POST'])
+def api_answer_question():
+    """Answer a question using advanced memory analysis with confidence scoring.
+
+    This endpoint calls memory_agent.answer_question() directly for sophisticated
+    confidence analysis and structured responses with supporting memories.
+
+    Body:
+        question (str): Question to answer
+        top_k (int, optional): Number of memories to retrieve for context (default: 5)
+        filter (str, optional): Filter expression for Redis VSIM command
+
+    Returns:
+        JSON with structured response including answer, confidence, reasoning, and supporting memories
+    """
     try:
         data = request.get_json()
-        question = data.get('question', '').strip()
-
-        if not question:
-            return jsonify({'error': 'Question is required'}), 400
 
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
+        question = data.get('question', '').strip()
         top_k = data.get('top_k', 5)
-        filterBy = data.get('filterBy')
-        print(f"top_k: {top_k}")
+        filter_expr = data.get('filter')
 
-        if filterBy:
-            print(f"🔍 Ask with filter: {filterBy}")
+        if not question:
+            return jsonify({'error': 'Question is required'}), 400
 
-        answer_response = memory_agent.answer_question(question, top_k=top_k, filterBy=filterBy)
+        print(f"🤔 Answering question: {question} (top_k: {top_k})")
+        if filter_expr:
+            print(f"🔍 Filter: {filter_expr}")
+
+        # Use the memory agent's sophisticated answer_question method directly
+        # This preserves the high-quality confidence scoring and structured responses
+        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr)
 
         return jsonify({
             'success': True,
@@ -119,23 +162,19 @@ def api_ask():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/status')
-def api_status():
-    """API endpoint to check system status."""
-    return jsonify({
-        'status': 'ready' if memory_agent else 'not_initialized',
-        'timestamp': datetime.now().isoformat()
-    })
+@app.route('/api/memory', methods=['GET'])
+def api_get_memory_info():
+    """Get memory statistics and system information.
 
-@app.route('/api/memory-info')
-def api_memory_info():
-    """API endpoint to get information about all stored memories."""
+    Returns:
+        JSON with memory count, vector dimension, embedding model, and system info
+    """
     try:
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        # Get comprehensive memory information
-        memory_info = memory_agent.get_memory_info()
+        # Get comprehensive memory information from underlying agent
+        memory_info = memory_agent.memory_agent.get_memory_info()
 
         if 'error' in memory_info:
             return jsonify(memory_info), 500
@@ -148,9 +187,74 @@ def api_memory_info():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/context', methods=['POST'])
+# =============================================================================
+# CHAT APPLICATION API - Conversational interface for demo/UI applications
+# =============================================================================
+
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    """Conversational interface using LangGraph workflow for complex multi-step reasoning.
+
+    This endpoint uses the full LangGraph agent workflow which can intelligently
+    orchestrate memory tools and provide sophisticated conversational capabilities.
+
+    Body:
+        message (str): User message/question
+
+    Returns:
+        JSON with success status, original message, and agent response
+    """
+    try:
+        data = request.get_json()
+
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        message = data.get('message', '').strip()
+
+        if not message:
+            return jsonify({'error': 'Message is required'}), 400
+
+        print(f"💬 Chat message: {message}")
+
+        # Use the LangGraph agent's run method for full workflow orchestration
+        response = memory_agent.run(message)
+
+        return jsonify({
+            'success': True,
+            'message': message,
+            'response': response
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# SYSTEM APIs - Health checks and status
+# =============================================================================
+
+@app.route('/api/health')
+def api_health():
+    """System health check."""
+    return jsonify({
+        'status': 'healthy' if memory_agent else 'unhealthy',
+        'service': 'LangGraph Memory Agent API',
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/memory/context', methods=['POST'])
 def api_set_context():
-    """API endpoint to set current context for memory grounding."""
+    """Set current context for memory grounding.
+
+    Body:
+        location (str, optional): Current location
+        activity (str, optional): Current activity
+        people_present (list, optional): List of people present
+        Additional fields will be stored as environment context
+
+    Returns:
+        JSON with success status and updated context
+    """
     try:
         data = request.get_json()
 
@@ -168,8 +272,10 @@ def api_set_context():
             if key not in ['location', 'activity', 'people_present']:
                 environment_context[key] = value
 
-        # Set context
-        memory_agent.set_context(
+        print(f"🌍 Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
+
+        # Set context on underlying memory agent
+        memory_agent.memory_agent.set_context(
             location=location,
             activity=activity,
             people_present=people_present if people_present else None,
@@ -190,14 +296,18 @@ def api_set_context():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/context', methods=['GET'])
+@app.route('/api/memory/context', methods=['GET'])
 def api_get_context():
-    """API endpoint to get current context information."""
+    """Get current context information.
+
+    Returns:
+        JSON with success status and current context (temporal, spatial, social, environmental)
+    """
     try:
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        current_context = memory_agent._get_current_context()
+        current_context = memory_agent.memory_agent._get_current_context()
 
         return jsonify({
             'success': True,
@@ -207,9 +317,16 @@ def api_get_context():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/delete/<memory_id>', methods=['DELETE'])
+@app.route('/api/memory/<memory_id>', methods=['DELETE'])
 def api_delete_memory(memory_id):
-    """API endpoint to delete a specific memory."""
+    """Delete a specific memory by ID.
+
+    Path Parameters:
+        memory_id (str): UUID of the memory to delete
+
+    Returns:
+        JSON with success status and deletion details
+    """
     try:
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
@@ -217,7 +334,8 @@ def api_delete_memory(memory_id):
         if not memory_id or not memory_id.strip():
             return jsonify({'error': 'Memory ID is required'}), 400
 
-        success = memory_agent.delete_memory(memory_id.strip())
+        print(f"🗑️ Deleting memory: {memory_id}")
+        success = memory_agent.memory_agent.delete_memory(memory_id.strip())
 
         if success:
             return jsonify({
@@ -234,14 +352,19 @@ def api_delete_memory(memory_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/delete-all', methods=['DELETE'])
+@app.route('/api/memory', methods=['DELETE'])
 def api_delete_all_memories():
-    """API endpoint to clear all memories."""
+    """Clear all memories from the system.
+
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
     try:
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        result = memory_agent.clear_all_memories()
+        print("🗑️ Clearing all memories...")
+        result = memory_agent.memory_agent.clear_all_memories()
 
         if result['success']:
             return jsonify({
@@ -261,7 +384,7 @@ def api_delete_all_memories():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("🚀 Starting Memory Agent Web UI...")
+    print("🚀 Starting LangGraph Memory Agent Web UI...")
     
     # Check environment
     if not os.getenv("OPENAI_API_KEY"):
@@ -269,11 +392,11 @@ if __name__ == '__main__':
         print("Please set your OpenAI API key in the .env file or environment.")
         exit(1)
     
-    # Initialize memory agent
+    # Initialize LangGraph memory agent
     if init_memory_agent():
-        print("✅ Memory agent initialized successfully")
+        print("✅ LangGraph memory agent initialized successfully")
         print("🌐 Starting web server...")
         app.run(debug=True, host='0.0.0.0', port=5001)
     else:
-        print("❌ Failed to initialize memory agent")
+        print("❌ Failed to initialize LangGraph memory agent")
         exit(1)
