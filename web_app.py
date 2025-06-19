@@ -7,6 +7,7 @@ A minimalist Flask web interface for the memory agent.
 
 import os
 import json
+import uuid
 from datetime import datetime
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify
@@ -17,8 +18,18 @@ from memory_agent import MemoryAgent
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-# Initialize the memory agent
+# Initialize the memory agent and OpenAI client
 memory_agent = None
+openai_client = None
+
+# Initialize OpenAI client
+try:
+    from openai import OpenAI
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+except ImportError:
+    print("⚠️ OpenAI package not installed. Chat sessions will not work.")
+except Exception as e:
+    print(f"⚠️ Failed to initialize OpenAI client: {e}")
 
 # Global configuration store
 app_config = {
@@ -84,13 +95,34 @@ def index():
     """Main page."""
     return render_template('index.html')
 
+@app.route('/chat-demo')
+def chat_demo():
+    """Chat API demo page."""
+    return render_template('chat_demo.html')
+
 # =============================================================================
-# DEVELOPER MEMORY APIs - Core memory operations for agent developers
+# NEME API - Fundamental Memory Operations (Inspired by Minsky's "Nemes")
+# =============================================================================
+#
+# Nemes are the fundamental units of memory in Minsky's Society of Mind theory.
+# These APIs handle atomic memory storage, retrieval, and basic operations.
+# Think of these as the building blocks of knowledge that can be combined
+# by higher-level cognitive processes.
+#
+# Core operations:
+# - Store atomic memories with contextual grounding
+# - Vector similarity search across stored memories
+# - Memory lifecycle management (delete, clear)
+# - Context management for grounding operations
 # =============================================================================
 
-@app.route('/api/memory', methods=['POST'])
-def api_store_memory():
-    """Store a new memory.
+@app.route('/api/nemes', methods=['POST'])
+def api_store_neme():
+    """Store a new atomic memory (Neme).
+
+    In Minsky's framework, a Neme is a fundamental unit of memory - an atomic
+    piece of knowledge that can be contextually grounded and later recalled
+    by higher-level cognitive processes.
 
     Body:
         text (str): Memory text to store
@@ -122,8 +154,7 @@ def api_store_memory():
         if not memory_text:
             return jsonify({'error': 'Memory text is required'}), 400
 
-        print(f"📝 Storing memory: {memory_text}")
-        print(f"🔧 Apply grounding: {apply_grounding}")
+        print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
 
         # Use the underlying memory agent for storage operations
         storage_result = memory_agent.memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
@@ -154,9 +185,12 @@ def api_store_memory():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/memory/search', methods=['POST'])
-def api_search_memories():
-    """Search memories using vector similarity.
+@app.route('/api/nemes/search', methods=['POST'])
+def api_search_nemes():
+    """Search atomic memories (Nemes) using vector similarity.
+
+    This performs direct vector similarity search across stored Nemes,
+    returning the most relevant atomic memories for a given query.
 
     Body:
         query (str): Search query text
@@ -179,7 +213,7 @@ def api_search_memories():
         if not query:
             return jsonify({'error': 'Query is required'}), 400
 
-        print(f"🔍 Searching memories: {query} (top_k: {top_k})")
+        print(f"🔍 NEME API: Searching atomic memories: {query} (top_k: {top_k})")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
 
@@ -196,54 +230,9 @@ def api_search_memories():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/memory/answer', methods=['POST'])
-def api_answer_question():
-    """Answer a question using advanced memory analysis with confidence scoring.
-
-    This endpoint calls memory_agent.answer_question() directly for sophisticated
-    confidence analysis and structured responses with supporting memories.
-
-    Body:
-        question (str): Question to answer
-        top_k (int, optional): Number of memories to retrieve for context (default: 5)
-        filter (str, optional): Filter expression for Redis VSIM command
-
-    Returns:
-        JSON with structured response including answer, confidence, reasoning, and supporting memories
-    """
-    try:
-        data = request.get_json()
-
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
-        question = data.get('question', '').strip()
-        top_k = data.get('top_k', 5)
-        filter_expr = data.get('filter')
-
-        if not question:
-            return jsonify({'error': 'Question is required'}), 400
-
-        print(f"🤔 Answering question: {question} (top_k: {top_k})")
-        if filter_expr:
-            print(f"🔍 Filter: {filter_expr}")
-
-        # Use the memory agent's sophisticated answer_question method directly
-        # This preserves the high-quality confidence scoring and structured responses
-        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr)
-
-        return jsonify({
-            'success': True,
-            'question': question,
-            **answer_response  # Spread the structured response (answer, confidence, supporting_memories, etc.)
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/memory', methods=['GET'])
-def api_get_memory_info():
-    """Get memory statistics and system information.
+@app.route('/api/nemes', methods=['GET'])
+def api_get_neme_info():
+    """Get atomic memory (Neme) statistics and system information.
 
     Returns:
         JSON with memory count, vector dimension, embedding model, and system info
@@ -266,63 +255,74 @@ def api_get_memory_info():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# =============================================================================
-# CHAT APPLICATION API - Conversational interface for demo/UI applications
-# =============================================================================
+@app.route('/api/nemes/<memory_id>', methods=['DELETE'])
+def api_delete_neme(memory_id):
+    """Delete a specific atomic memory (Neme) by ID.
 
-@app.route('/api/chat', methods=['POST'])
-def api_chat():
-    """Conversational interface using LangGraph workflow for complex multi-step reasoning.
-
-    This endpoint uses the full LangGraph agent workflow which can intelligently
-    orchestrate memory tools and provide sophisticated conversational capabilities.
-
-    Body:
-        message (str): User message/question
+    Path Parameters:
+        memory_id (str): UUID of the memory to delete
 
     Returns:
-        JSON with success status, original message, and agent response
+        JSON with success status and deletion details
     """
     try:
-        data = request.get_json()
-
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        message = data.get('message', '').strip()
+        if not memory_id or not memory_id.strip():
+            return jsonify({'error': 'Memory ID is required'}), 400
 
-        if not message:
-            return jsonify({'error': 'Message is required'}), 400
+        print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
+        success = memory_agent.memory_agent.delete_memory(memory_id.strip())
 
-        print(f"💬 Chat message: {message}")
-
-        # Use the LangGraph agent's run method for full workflow orchestration
-        response = memory_agent.run(message)
-
-        return jsonify({
-            'success': True,
-            'message': message,
-            'response': response
-        })
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Neme {memory_id} deleted successfully',
+                'memory_id': memory_id
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Neme {memory_id} not found or could not be deleted'
+            }), 404
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# =============================================================================
-# SYSTEM APIs - Health checks and status
-# =============================================================================
+@app.route('/api/nemes', methods=['DELETE'])
+def api_delete_all_nemes():
+    """Clear all atomic memories (Nemes) from the system.
 
-@app.route('/api/health')
-def api_health():
-    """System health check."""
-    return jsonify({
-        'status': 'healthy' if memory_agent else 'unhealthy',
-        'service': 'LangGraph Memory Agent API',
-        'timestamp': datetime.now().isoformat()
-    })
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
+    try:
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
 
-@app.route('/api/memory/context', methods=['POST'])
-def api_set_context():
+        print("🗑️ NEME API: Clearing all atomic memories...")
+        result = memory_agent.memory_agent.clear_all_memories()
+
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'memories_deleted': result['memories_deleted'],
+                'vectorset_existed': result['vectorset_existed']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result['error'],
+                'memories_deleted': result.get('memories_deleted', 0)
+            }), 500
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/nemes/context', methods=['POST'])
+def api_set_neme_context():
     """Set current context for memory grounding.
 
     Body:
@@ -351,7 +351,7 @@ def api_set_context():
             if key not in ['location', 'activity', 'people_present']:
                 environment_context[key] = value
 
-        print(f"🌍 Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
+        print(f"🌍 NEME API: Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
 
         # Set context on underlying memory agent
         memory_agent.memory_agent.set_context(
@@ -375,9 +375,9 @@ def api_set_context():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/memory/context', methods=['GET'])
-def api_get_context():
-    """Get current context information.
+@app.route('/api/nemes/context', methods=['GET'])
+def api_get_neme_context():
+    """Get current context information for memory grounding.
 
     Returns:
         JSON with success status and current context (temporal, spatial, social, environmental)
@@ -396,71 +396,776 @@ def api_get_context():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/memory/<memory_id>', methods=['DELETE'])
-def api_delete_memory(memory_id):
-    """Delete a specific memory by ID.
+# =============================================================================
+# K-LINE API - Reflective Operations (Inspired by Minsky's "K-lines")
+# =============================================================================
+#
+# K-lines (Knowledge lines) represent temporary mental states that activate
+# and connect relevant Nemes for specific cognitive tasks. In Minsky's theory,
+# K-lines are the mechanism by which the mind constructs coherent mental states
+# from distributed memory fragments.
+#
+# These APIs handle:
+# - Constructing mental states by recalling and filtering relevant memories
+# - Question answering with confidence scoring and reasoning
+# - Extracting valuable memories from conversational data
+# - Advanced cognitive operations that combine multiple Nemes
+# =============================================================================
 
-    Path Parameters:
-        memory_id (str): UUID of the memory to delete
+@app.route('/api/klines/recall', methods=['POST'])
+def api_kline_recall():
+    """Construct a mental state (K-line) by recalling relevant memories.
+
+    This operation searches for and filters relevant Nemes to construct
+    a coherent mental state for a specific query or context. The result
+    is a formatted collection of memories that can be used for reasoning.
+
+    Body:
+        query (str): Query to construct mental state around
+        top_k (int, optional): Number of memories to include (default: 5)
+        filter (str, optional): Filter expression for Redis VSIM command
+        use_llm_filtering (bool, optional): Apply LLM-based relevance filtering (default: false)
 
     Returns:
-        JSON with success status and deletion details
+        JSON with formatted mental state and supporting memories
     """
     try:
+        data = request.get_json()
+
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        if not memory_id or not memory_id.strip():
-            return jsonify({'error': 'Memory ID is required'}), 400
+        query = data.get('query', '').strip()
+        top_k = data.get('top_k', 5)
+        filter_expr = data.get('filter')
+        use_llm_filtering = data.get('use_llm_filtering', False)
 
-        print(f"🗑️ Deleting memory: {memory_id}")
-        success = memory_agent.memory_agent.delete_memory(memory_id.strip())
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
 
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'Memory {memory_id} deleted successfully',
-                'memory_id': memory_id
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Memory {memory_id} not found or could not be deleted'
-            }), 404
+        print(f"🧠 K-LINE API: Constructing mental state for: {query} (top_k: {top_k})")
+        if filter_expr:
+            print(f"🔍 Filter: {filter_expr}")
+        if use_llm_filtering:
+            print(f"🤖 LLM filtering: enabled")
+
+        # Search for relevant memories
+        memories = memory_agent.memory_agent.search_memories(query, top_k, filter_expr)
+
+        # Apply LLM filtering if requested
+        if use_llm_filtering and memories:
+            print(f"🤖 K-LINE API: Applying LLM filtering to {len(memories)} memories")
+            filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(query, memories)
+
+            # Track filtering statistics
+            original_count = len(memories)
+            filtered_count = len(filtered_memories)
+            print(f"🤖 K-LINE API: LLM filtering kept {filtered_count}/{original_count} memories")
+
+            memories = filtered_memories
+
+        # Format the mental state
+        formatted_state = memory_agent.memory_agent.processing.format_memory_results(memories)
+
+        response_data = {
+            'success': True,
+            'query': query,
+            'mental_state': formatted_state,
+            'memories': memories,
+            'memory_count': len(memories)
+        }
+
+        # Add filtering information if LLM filtering was used
+        if use_llm_filtering:
+            response_data['llm_filtering_applied'] = True
+            if 'original_count' in locals():
+                response_data['original_memory_count'] = original_count
+                response_data['filtered_memory_count'] = filtered_count
+
+        return jsonify(response_data)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/memory', methods=['DELETE'])
-def api_delete_all_memories():
-    """Clear all memories from the system.
+@app.route('/api/klines/ask', methods=['POST'])
+def api_kline_answer():
+    """Answer a question using K-line construction and reasoning.
+
+    This operation constructs a mental state from relevant Nemes and applies
+    sophisticated reasoning to answer questions with confidence scoring.
+    It represents the full cognitive process of memory recall + reasoning.
+
+    Body:
+        question (str): Question to answer
+        top_k (int, optional): Number of memories to retrieve for context (default: 5)
+        filter (str, optional): Filter expression for Redis VSIM command
 
     Returns:
-        JSON with success status, deletion count, and operation details
+        JSON with structured response including answer, confidence, reasoning, and supporting memories
     """
     try:
+        data = request.get_json()
+
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        print("🗑️ Clearing all memories...")
-        result = memory_agent.memory_agent.clear_all_memories()
+        question = data.get('question', '').strip()
+        top_k = data.get('top_k', 5)
+        filter_expr = data.get('filter')
 
-        if result['success']:
-            return jsonify({
-                'success': True,
-                'message': result['message'],
-                'memories_deleted': result['memories_deleted'],
-                'vectorset_existed': result['vectorset_existed']
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': result['error'],
-                'memories_deleted': result.get('memories_deleted', 0)
-            }), 500
+        if not question:
+            return jsonify({'error': 'Question is required'}), 400
+
+        print(f"🤔 K-LINE API: Answering question via mental state construction: {question} (top_k: {top_k})")
+        if filter_expr:
+            print(f"🔍 Filter: {filter_expr}")
+
+        # Use the memory agent's sophisticated answer_question method
+        # This constructs a K-line (mental state) and applies reasoning
+        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr)
+
+        return jsonify({
+            'success': True,
+            'question': question,
+            **answer_response  # Spread the structured response (answer, confidence, supporting_memories, etc.)
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/klines/extract', methods=['POST'])
+def api_kline_extract():
+    """Extract and store memories from conversational data using K-line analysis.
+
+    This operation uses sophisticated LLM analysis to identify valuable
+    information in conversations and extract it as new Nemes. It represents
+    the process of converting raw experience into structured memory.
+
+    Body:
+        raw_input (str): The full conversational data to analyze
+        context_prompt (str): Application-specific context for extraction guidance
+        extraction_examples (list, optional): Examples to guide LLM extraction
+        apply_grounding (bool, optional): Whether to apply contextual grounding (default: True)
+
+    Returns:
+        JSON with extracted memories and extraction summary
+    """
+    try:
+        data = request.get_json()
+
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        # Validate required fields
+        raw_input = data.get('raw_input', '').strip()
+        context_prompt = data.get('context_prompt', '').strip()
+
+        if not raw_input:
+            return jsonify({'error': 'raw_input is required'}), 400
+
+        if not context_prompt:
+            return jsonify({'error': 'context_prompt is required'}), 400
+
+        # Optional parameters with defaults
+        extraction_examples = data.get('extraction_examples', None)
+        apply_grounding = data.get('apply_grounding', True)
+
+        print(f"🔍 K-LINE API: Extracting memories from {len(raw_input)} characters of input")
+        print(f"📋 Context: {context_prompt[:100]}...")
+
+        # Call the extract_and_store_memories method
+        result = memory_agent.memory_agent.extract_and_store_memories(
+            raw_input=raw_input,
+            context_prompt=context_prompt,
+            extraction_examples=extraction_examples,
+            apply_grounding=apply_grounding
+        )
+
+        return jsonify({
+            'success': True,
+            **result
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# AGENT API - High-Level Orchestration (Full Cognitive Architecture)
+# =============================================================================
+#
+# The Agent API represents the highest level of cognitive architecture,
+# orchestrating both Nemes (atomic memories) and K-lines (mental states)
+# to provide sophisticated conversational and reasoning capabilities.
+#
+# These APIs handle:
+# - Full conversational agents with memory integration
+# - Session management with persistent context
+# - Complex multi-step reasoning workflows
+# - Integration of memory operations with language generation
+# =============================================================================
+
+@app.route('/api/agent/chat', methods=['POST'])
+def api_agent_chat():
+    """Full conversational agent with integrated memory architecture.
+
+    This endpoint orchestrates the complete cognitive architecture:
+    - Searches relevant Nemes (atomic memories)
+    - Constructs K-lines (mental states) for context
+    - Applies sophisticated reasoning and language generation
+    - Optionally extracts new memories from the conversation
+
+    Body:
+        message (str): User message/question
+
+    Returns:
+        JSON with success status, original message, and agent response
+    """
+    try:
+        data = request.get_json()
+
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        message = data.get('message', '').strip()
+
+        if not message:
+            return jsonify({'error': 'Message is required'}), 400
+
+        print(f"💬 AGENT API: Processing chat message - '{message}'")
+
+        # Use the LangGraph agent's run method for full workflow orchestration
+        response = memory_agent.run(message)
+
+        return jsonify({
+            'success': True,
+            'message': message,
+            'response': response
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+
+
+# =============================================================================
+# CHAT APIs - General purpose chat interface
+# =============================================================================
+
+@app.route('/api/agent/session', methods=['POST'])
+def api_create_agent_session():
+    """Create a new agent session with integrated memory capabilities.
+
+    Body:
+        system_prompt (str): Custom system prompt for the agent session
+        session_id (str, optional): Custom session ID, auto-generated if not provided
+        config (dict, optional): Additional configuration options
+            - use_memory (bool, optional): Whether to enable memory features (default: true)
+            - model (str, optional): OpenAI model to use (default: gpt-3.5-turbo)
+            - temperature (float, optional): Response creativity (default: 0.7)
+            - max_tokens (int, optional): Maximum response length (default: 1000)
+
+    Returns:
+        JSON with session_id and confirmation
+    """
+    try:
+        data = request.get_json()
+
+        system_prompt = data.get('system_prompt', '').strip()
+        if not system_prompt:
+            return jsonify({'error': 'system_prompt is required'}), 400
+
+        session_id = data.get('session_id', str(uuid.uuid4()))
+        config = data.get('config', {})
+
+        # Extract memory configuration with default to true for agent sessions
+        use_memory = config.get('use_memory', True)
+
+        # Store session in memory (in production, use Redis or database)
+        if not hasattr(app, 'chat_sessions'):
+            app.chat_sessions = {}
+
+        session_data = {
+            'system_prompt': system_prompt,
+            'messages': [],
+            'config': config,
+            'created_at': datetime.now().isoformat(),
+            'last_activity': datetime.now().isoformat(),
+            'use_memory': use_memory
+        }
+        print(f"")
+        # Add memory-specific fields if memory is enabled
+        if use_memory:
+            session_data.update({
+                'conversation_buffer': [],  # Buffer for memory extraction
+                'extraction_threshold': 2,  # Number of messages before extraction
+                'last_extraction': None,    # Timestamp of last memory extraction
+                'memory_context': f"Chat session for: {system_prompt[:100]}..."  # Context for memory extraction
+            })
+
+        app.chat_sessions[session_id] = session_data
+
+        memory_status = "enabled" if use_memory else "disabled"
+        print(f"🆕 AGENT API: Created agent session {session_id} (memory: {memory_status})")
+
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'system_prompt': system_prompt,
+            'use_memory': use_memory,
+            'created_at': session_data['created_at']
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/session/<session_id>', methods=['POST'])
+def api_agent_session_message(session_id):
+    """Send a message to an agent session with full cognitive architecture.
+
+    This endpoint provides the complete agent experience:
+    - Searches relevant Nemes for context
+    - Constructs K-lines (mental states)
+    - Generates contextually-aware responses
+    - Automatically extracts new memories from conversations
+
+    Args:
+        session_id: The agent session ID
+
+    Body:
+        message (str): The user's message
+        stream (bool, optional): Whether to stream the response (default: False)
+        store_memory (bool, optional): Whether to extract and store memories from this conversation (default: True for memory-enabled sessions)
+
+    Returns:
+        JSON with the assistant's response and conversation context.
+        For memory-enabled sessions, includes 'memory_context' with relevant memories used in the response.
+    """
+    try:
+        data = request.get_json()
+
+        if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
+            return jsonify({'error': 'Agent session not found'}), 404
+
+        message = data.get('message', '').strip()
+        if not message:
+            return jsonify({'error': 'message is required'}), 400
+
+        stream = data.get('stream', False)
+        store_memory = data.get('store_memory', True)  # Default to True for backward compatibility
+
+        session = app.chat_sessions[session_id]
+        use_memory = session.get('use_memory', False)
+
+        # Add user message to session
+        user_message = {
+            'role': 'user',
+            'content': message,
+            'timestamp': datetime.now().isoformat()
+        }
+        session['messages'].append(user_message)
+
+        if use_memory:
+            print(f"1) User said: '{message[:80]}{'...' if len(message) > 80 else ''}'")
+        else:
+            print(f"💬 [{session_id}] AGENT API: Agent session (memory: disabled): User: {message}")
+
+        # Handle memory-enabled sessions
+        if use_memory:
+            return _handle_memory_enabled_message(session_id, session, message, stream, store_memory)
+        else:
+            return _handle_standard_message(session_id, session, stream)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _handle_standard_message(session_id, session, stream):
+    """Handle message processing for sessions without memory."""
+    # Prepare messages for LLM (include system prompt)
+    llm_messages = [
+        {'role': 'system', 'content': session['system_prompt']}
+    ]
+
+    # Add conversation history
+    for msg in session['messages']:
+        llm_messages.append({
+            'role': msg['role'],
+            'content': msg['content']
+        })
+
+    # Get response from OpenAI
+    if not openai_client:
+        return jsonify({'error': 'OpenAI client not initialized'}), 500
+
+    response = openai_client.chat.completions.create(
+        model=session['config'].get('model', 'gpt-3.5-turbo'),
+        messages=llm_messages,
+        temperature=session['config'].get('temperature', 0.7),
+        max_tokens=session['config'].get('max_tokens', 1000),
+        stream=stream
+    )
+
+    if stream:
+        # TODO: Implement streaming response
+        return jsonify({'error': 'Streaming not yet implemented'}), 501
+
+    assistant_response = response.choices[0].message.content
+
+    # Add assistant response to session
+    assistant_message = {
+        'role': 'assistant',
+        'content': assistant_response,
+        'timestamp': datetime.now().isoformat()
+    }
+    session['messages'].append(assistant_message)
+    session['last_activity'] = datetime.now().isoformat()
+
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'message': assistant_response,
+        'conversation_length': len(session['messages']),
+        'timestamp': assistant_message['timestamp']
+    })
+
+
+def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True):
+    """Handle message processing for sessions with memory enabled."""
+    if not memory_agent:
+        return jsonify({'error': 'Memory agent not initialized but session requires memory'}), 500
+
+    # Add to conversation buffer for memory extraction
+    if 'conversation_buffer' not in session:
+        session['conversation_buffer'] = []
+
+    session['conversation_buffer'].append({
+        'role': 'user',
+        'content': user_message,
+        'timestamp': datetime.now().isoformat()
+    })
+
+    # Retrieve relevant memories for context
+    relevant_memories = []
+    try:
+        print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}'")
+        memory_results = memory_agent.memory_agent.search_memories(
+            query=user_message,
+            top_k=10
+        )
+
+        if memory_results:
+            relevant_memories = memory_results
+            print(f"3) Found {len(relevant_memories)} relevant memories")
+        else:
+            print(f"3) No relevant memories found")
+    except Exception as e:
+        print(f"⚠️ Memory search failed: {e}")
+
+    # Prepare enhanced system prompt with memory context
+    enhanced_system_prompt = session['system_prompt']
+    if relevant_memories:
+        memory_context = "\n\Possibly relevant information from previous interactions:\n"
+        for i, memory in enumerate(relevant_memories, 1):
+            memory_context += f"{i}. {memory['text']}\n"
+        memory_context += "\nEvaluate whether the memory is relevant to this prompt or not (discard if not relevant) if relevant, use this information to provide more personalized and contextual responses."
+        enhanced_system_prompt += memory_context
+
+    # Prepare messages for LLM
+    llm_messages = [
+        {'role': 'system', 'content': enhanced_system_prompt}
+    ]
+
+    # Add recent conversation history (limit to last 10 messages to avoid token limits)
+    recent_messages = session['messages'][-10:]
+    for msg in recent_messages:
+        llm_messages.append({
+            'role': msg['role'],
+            'content': msg['content']
+        })
+
+    # Get response from OpenAI
+    if not openai_client:
+        return jsonify({'error': 'OpenAI client not initialized'}), 500
+
+    response = openai_client.chat.completions.create(
+        model=session['config'].get('model', 'gpt-3.5-turbo'),
+        messages=llm_messages,
+        temperature=session['config'].get('temperature', 0.7),
+        max_tokens=session['config'].get('max_tokens', 1000),
+        stream=stream
+    )
+
+    if stream:
+        # TODO: Implement streaming response
+        return jsonify({'error': 'Streaming not yet implemented'}), 501
+
+    assistant_response = response.choices[0].message.content
+
+    # Add assistant response to session and buffer
+    assistant_message = {
+        'role': 'assistant',
+        'content': assistant_response,
+        'timestamp': datetime.now().isoformat()
+    }
+    session['messages'].append(assistant_message)
+    session['conversation_buffer'].append(assistant_message)
+    session['last_activity'] = datetime.now().isoformat()
+
+    # Check if we should extract memories (only if store_memory is True)
+    if store_memory:
+        _check_and_extract_memories(session_id, session)
+    else:
+        print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
+
+    response_data = {
+        'success': True,
+        'session_id': session_id,
+        'message': assistant_response,
+        'conversation_length': len(session['messages']),
+        'timestamp': assistant_message['timestamp']
+    }
+
+    # Add memory info if memories were used
+    if relevant_memories:
+        response_data['memory_context'] = {
+            'memories_used': len(relevant_memories),
+            'memories': relevant_memories[:3]  # Include full memory details for rendering
+        }
+
+    return jsonify(response_data)
+
+
+def _check_and_extract_memories(session_id, session):
+    """Extract memories from the most recent user message."""
+    buffer = session.get('conversation_buffer', [])
+
+    # Get the most recent user message
+    recent_user_messages = [msg for msg in buffer if msg['role'] == 'user']
+    if not recent_user_messages:
+        print(f"🧠 [{session_id}] MEMORY: No user messages to extract from")
+        return
+
+    # Get the latest user message
+    latest_user_message = recent_user_messages[-1]
+
+    print(f"4) Extracting memories from: '{latest_user_message['content'][:60]}{'...' if len(latest_user_message['content']) > 60 else ''}'")
+
+    # Check if this message contains extractable information
+    if not _contains_extractable_info([latest_user_message]):
+        print(f"5) No extractable information found - skipping extraction")
+        return
+
+    try:
+        # Format the latest user message for extraction
+        # We only want to extract user preferences, facts, and constraints, not LLM suggestions
+        conversation_text = f"User: {latest_user_message['content']}\n"
+
+        # Extract memories using the memory agent
+        result = memory_agent.memory_agent.extract_and_store_memories(
+            raw_input=conversation_text,
+            context_prompt=session.get('memory_context', 'Extract ONLY user preferences, constraints, facts, and important personal details from the user messages. Do NOT extract assistant suggestions or recommendations.'),
+            apply_grounding=True
+        )
+
+        if result["total_extracted"] > 0:
+            extracted_memories = result.get("extracted_memories", [])
+            memory_texts = [mem.get("final_text", mem.get("raw_text", "Unknown")) for mem in extracted_memories]
+            print(f"5) Identified {result['total_extracted']} memories: {', '.join([f'"{text[:40]}{"..." if len(text) > 40 else ""}"' for text in memory_texts])}")
+            print(f"6) Saved {result['total_extracted']} memories to database")
+            session['last_extraction'] = datetime.now().isoformat()
+        else:
+            print(f"5) No memories identified for extraction")
+
+        # Since we process each message individually, we can keep a smaller buffer
+        # Keep only the last 4 messages (2 exchanges) for context
+        session['conversation_buffer'] = buffer[-4:]
+
+    except Exception as e:
+        print(f"⚠️ Memory extraction failed: {e}")
+
+
+def _contains_extractable_info(messages):
+    """Check if messages contain information worth extracting using LLM evaluation."""
+    if not openai_client:
+        # Fallback to keyword-based approach if OpenAI client not available
+        return _contains_extractable_info_fallback(messages)
+
+    # Combine messages into conversation text
+    conversation_text = ' '.join([msg['content'] for msg in messages])
+
+    # Skip very short messages
+    if len(conversation_text.strip()) < 10:
+        return False
+
+    # Use LLM to evaluate if the text contains extractable information
+    try:
+        evaluation_prompt = f"""You are an intelligent memory evaluation system. Your task is to determine if the following conversational text contains information that would be valuable to remember for future interactions.
+
+VALUABLE INFORMATION INCLUDES:
+- Personal preferences (likes, dislikes, habits)
+- Constraints and requirements (budget, time, accessibility needs)
+- Personal details (family, dietary restrictions, important dates)
+- Factual information about people, places, or things
+- Goals and intentions
+- Important contextual details
+
+STRICTLY IGNORE:
+- Temporary information (current weather, today's schedule, immediate tasks)
+- Conversational filler or pleasantries ("Hi there", "How are you?")
+- General questions without personal context ("What's the best way to...")
+- Information requests that don't reveal user preferences
+- Time-sensitive information that won't be relevant later
+- Assistant responses or suggestions
+
+CONVERSATIONAL TEXT TO EVALUATE:
+"{conversation_text}"
+
+Respond with ONLY "YES" if the text contains valuable information worth remembering, or "NO" if it doesn't. Do not include any explanation."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": evaluation_prompt}],
+            temperature=0.1,  # Low temperature for consistent evaluation
+            max_tokens=10     # We only need YES or NO
+        )
+
+        result = response.choices[0].message.content.strip().upper()
+        return result == "YES"
+
+    except Exception as e:
+        print(f"⚠️ LLM evaluation failed, falling back to keyword approach: {e}")
+        return _contains_extractable_info_fallback(messages)
+
+
+def _contains_extractable_info_fallback(messages):
+    """Fallback keyword-based approach for checking extractable information."""
+    extractable_keywords = [
+        'prefer', 'like', 'love', 'hate', 'dislike', 'always', 'never', 'usually',
+        'budget', 'family', 'wife', 'husband', 'kids', 'children', 'allergic', 'allergy',
+        'need', 'want', 'can\'t', 'cannot', 'must', 'have to', 'dietary', 'vegetarian',
+        'vegan', 'gluten', 'accessibility', 'wheelchair', 'mobility', 'window seat',
+        'aisle seat', 'michelin', 'restaurant', 'hotel', 'flight', 'travel', 'remember',
+        'important', 'note', 'remind', 'don\'t forget'
+    ]
+
+    conversation_text = ' '.join([msg['content'] for msg in messages]).lower()
+    return any(keyword in conversation_text for keyword in extractable_keywords)
+
+@app.route('/api/agent/session/<session_id>', methods=['GET'])
+def api_get_agent_session(session_id):
+    """Get agent session information and conversation history.
+
+    Args:
+        session_id: The agent session ID
+
+    Returns:
+        JSON with session details and message history
+    """
+    try:
+        if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
+            return jsonify({'error': 'Agent session not found'}), 404
+
+        session = app.chat_sessions[session_id]
+
+        response_data = {
+            'success': True,
+            'session_id': session_id,
+            'system_prompt': session['system_prompt'],
+            'messages': session['messages'],
+            'config': session['config'],
+            'created_at': session['created_at'],
+            'last_activity': session['last_activity'],
+            'message_count': len(session['messages']),
+            'use_memory': session.get('use_memory', False)
+        }
+
+        # Add memory-specific information if memory is enabled
+        if session.get('use_memory', False):
+            response_data.update({
+                'memory_info': {
+                    'extraction_threshold': session.get('extraction_threshold', 2),
+                    'last_extraction': session.get('last_extraction'),
+                    'buffer_size': len(session.get('conversation_buffer', []))
+                }
+            })
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/session/<session_id>', methods=['DELETE'])
+def api_delete_agent_session(session_id):
+    """Delete an agent session.
+
+    Args:
+        session_id: The agent session ID
+
+    Returns:
+        JSON confirmation of deletion
+    """
+    try:
+        if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
+            return jsonify({'error': 'Agent session not found'}), 404
+
+        del app.chat_sessions[session_id]
+
+        print(f"🗑️ AGENT API: Deleted agent session {session_id}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Agent session {session_id} deleted'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/sessions', methods=['GET'])
+def api_list_agent_sessions():
+    """List all active agent sessions.
+
+    Returns:
+        JSON with list of active sessions
+    """
+    try:
+        if not hasattr(app, 'chat_sessions'):
+            app.chat_sessions = {}
+
+        sessions = []
+        for session_id, session in app.chat_sessions.items():
+            sessions.append({
+                'session_id': session_id,
+                'created_at': session['created_at'],
+                'last_activity': session['last_activity'],
+                'message_count': len(session['messages']),
+                'system_prompt_preview': session['system_prompt'][:100] + '...' if len(session['system_prompt']) > 100 else session['system_prompt']
+            })
+
+        return jsonify({
+            'success': True,
+            'sessions': sessions,
+            'total_sessions': len(sessions)
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# SYSTEM APIs - Health checks and status
+# =============================================================================
+
+@app.route('/api/health')
+def api_health():
+    """System health check."""
+    return jsonify({
+        'status': 'healthy' if memory_agent else 'unhealthy',
+        'service': 'LangGraph Memory Agent API',
+        'timestamp': datetime.now().isoformat()
+    })
+
+
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT APIs - Runtime configuration management
@@ -985,19 +1690,25 @@ def api_test_config():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("🚀 Starting LangGraph Memory Agent Web UI...")
-    
+    print("🚀 Starting Memory Agent Web Server...")
+
     # Check environment
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY not found in environment variables.")
         print("Please set your OpenAI API key in the .env file or environment.")
         exit(1)
-    
+
     # Initialize LangGraph memory agent
     if init_memory_agent():
-        print("✅ LangGraph memory agent initialized successfully")
-        print("🌐 Starting web server...")
-        app.run(debug=True, host='0.0.0.0', port=5001)
+        print("✅ Memory agent ready")
+        print("🌐 Server running at http://localhost:5001")
+        print("📖 API docs available at http://localhost:5001")
+        print()
+        # Disable Flask's debug output by setting debug=False and configuring logging
+        import logging
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.WARNING)
+        app.run(debug=False, host='0.0.0.0', port=5001)
     else:
-        print("❌ Failed to initialize LangGraph memory agent")
+        print("❌ Failed to initialize memory agent")
         exit(1)

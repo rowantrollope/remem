@@ -226,6 +226,50 @@ def format_memory_results(memories_json: str) -> str:
     except Exception as e:
         return f"Error formatting memories: {str(e)}"
 
+@tool
+def extract_and_store_memories(raw_input: str, context_prompt: str) -> str:
+    """Extract and store valuable memories from conversational data using intelligent LLM analysis.
+
+    This tool analyzes conversational input to identify and store only the most valuable information
+    for long-term retention, filtering out conversational noise and temporary information.
+
+    Args:
+        raw_input: The conversational data to analyze (e.g., recent chat messages)
+        context_prompt: Application context to guide extraction (e.g., "I am a travel agent app")
+
+    Returns:
+        JSON string with extraction results including extracted memories and summary
+    """
+    if not _memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        result = _memory_agent.extract_and_store_memories(
+            raw_input=raw_input,
+            context_prompt=context_prompt,
+            apply_grounding=True
+        )
+
+        # Format for LLM consumption
+        return json.dumps({
+            "success": True,
+            "total_extracted": result["total_extracted"],
+            "total_filtered": result["total_filtered"],
+            "extraction_summary": result["extraction_summary"],
+            "extracted_memories": [
+                {
+                    "text": memory["extracted_text"],
+                    "confidence": memory["confidence"],
+                    "category": memory["category"],
+                    "memory_id": memory["memory_id"]
+                }
+                for memory in result["extracted_memories"]
+            ]
+        }, indent=2)
+
+    except Exception as e:
+        return f"Error extracting memories: {str(e)}"
+
 # List of available memory tools
 AVAILABLE_TOOLS = [
     store_memory,
@@ -234,5 +278,6 @@ AVAILABLE_TOOLS = [
     get_memory_stats,
     analyze_question_type,
     answer_with_confidence,
-    format_memory_results
+    format_memory_results,
+    extract_and_store_memories
 ]

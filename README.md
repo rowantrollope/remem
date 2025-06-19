@@ -394,6 +394,104 @@ Delete all memories from the system.
 
 ---
 
+### K-Lines API (Cognitive Memory Operations)
+
+These endpoints implement Minsky's K-lines cognitive model for advanced memory operations, providing mental state construction and reasoning capabilities.
+
+#### 1. Recall Memories (Mental State Construction)
+
+Construct a mental state (K-line) by recalling relevant memories for a specific query or context.
+
+**POST** `/api/klines/recall`
+
+**Request Body:**
+```json
+{
+  "query": "restaurant preferences for dinner",
+  "top_k": 5,
+  "filter": "optional_filter_expression",
+  "use_llm_filtering": false
+}
+```
+
+**Parameters:**
+- `query` (string, required): Query to construct mental state around
+- `top_k` (integer, optional): Number of memories to include (default: 5)
+- `filter` (string, optional): Filter expression for Redis VSIM command
+- `use_llm_filtering` (boolean, optional): Apply LLM-based relevance filtering (default: false)
+
+**Response:**
+```json
+{
+  "success": true,
+  "query": "restaurant preferences for dinner",
+  "mental_state": "Here's what I remember that might be useful:\n1. I prefer Italian restaurants with good pasta (from 2024-01-15 18:30:00, 95.2% similar)\n   Tags: restaurant, food, preferences",
+  "memories": [
+    {
+      "id": "memory:550e8400-e29b-41d4-a716-446655440000",
+      "text": "I prefer Italian restaurants with good pasta",
+      "score": 0.952,
+      "formatted_time": "2024-01-15 18:30:00",
+      "tags": ["restaurant", "food", "preferences"],
+      "relevance_reasoning": "Directly relates to restaurant preferences for dining"
+    }
+  ],
+  "memory_count": 1,
+  "llm_filtering_applied": false
+}
+```
+
+**LLM Filtering Enhancement:**
+When `use_llm_filtering: true`, the system applies the same intelligent relevance filtering used in the `/ask` endpoint:
+- Each memory is evaluated by an LLM for actual relevance to the query
+- Only memories deemed relevant are included in the mental state
+- Adds `relevance_reasoning` to each memory explaining why it was kept
+- Response includes `original_memory_count` and `filtered_memory_count` for transparency
+
+#### 2. Answer Questions (K-line Reasoning)
+
+Answer questions using K-line construction and sophisticated reasoning with confidence analysis.
+
+**POST** `/api/klines/ask`
+
+**Request Body:**
+```json
+{
+  "question": "What restaurants should I try for dinner tonight?",
+  "top_k": 5,
+  "filter": "optional_filter_expression"
+}
+```
+
+**Parameters:**
+- `question` (string, required): Question to answer
+- `top_k` (integer, optional): Number of memories to retrieve for context (default: 5)
+- `filter` (string, optional): Filter expression for Redis VSIM command
+
+**Response:**
+```json
+{
+  "success": true,
+  "question": "What restaurants should I try for dinner tonight?",
+  "type": "answer",
+  "answer": "Based on your preferences, I'd recommend trying Italian restaurants with good pasta, as you've expressed a preference for this type of cuisine.",
+  "confidence": "medium",
+  "reasoning": "Your memory indicates a preference for Italian restaurants with good pasta",
+  "supporting_memories": [
+    {
+      "id": "memory:550e8400-e29b-41d4-a716-446655440000",
+      "text": "I prefer Italian restaurants with good pasta",
+      "relevance_score": 95.2,
+      "timestamp": "2024-01-15 18:30:00",
+      "tags": ["restaurant", "food", "preferences"],
+      "relevance_reasoning": "Directly relates to restaurant preferences for dining"
+    }
+  ]
+}
+```
+
+---
+
 ### Chat Application API
 
 This endpoint provides a conversational interface using the LangGraph workflow for complex multi-step reasoning.
