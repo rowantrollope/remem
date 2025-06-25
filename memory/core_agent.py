@@ -16,10 +16,10 @@ Usage:
 python memory_agent.py
 """
 
-from memory_core import MemoryCore
-from memory_processing import MemoryProcessing
-from memory_extraction import MemoryExtraction
-from memory_reasoning import MemoryReasoning
+from .core import MemoryCore
+from .processing import MemoryProcessing
+from .extraction import MemoryExtraction
+from .reasoning import MemoryReasoning
 from typing import Dict, Any, List, Optional
 import sys
 import os

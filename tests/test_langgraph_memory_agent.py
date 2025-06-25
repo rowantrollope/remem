@@ -23,7 +23,7 @@ def test_langgraph_memory_agent():
         return False
     
     try:
-        from langgraph_memory_agent import LangGraphMemoryAgent
+        from memory.agent import LangGraphMemoryAgent
         
         # Initialize agent
         print("🔧 Initializing LangGraph Memory Agent...")
@@ -93,7 +93,7 @@ def test_api_compatibility():
     print("\n🔗 Testing API Compatibility...")
     
     try:
-        from langgraph_memory_agent import LangGraphMemoryAgent
+        from memory.agent import LangGraphMemoryAgent
         
         agent = LangGraphMemoryAgent()
         
@@ -123,8 +123,8 @@ def test_tool_functionality():
     print("\n🔧 Testing Tool Functionality...")
     
     try:
-        from tools import store_memory, search_memories, set_context, get_memory_stats
-        from langgraph_memory_agent import LangGraphMemoryAgent
+        from memory.tools import store_memory, search_memories, set_context, get_memory_stats
+        from memory.agent import LangGraphMemoryAgent
         
         # Initialize agent to set up tools
         agent = LangGraphMemoryAgent()

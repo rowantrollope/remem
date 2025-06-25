@@ -21,7 +21,7 @@ def test_confidence_and_json():
         return False
     
     try:
-        from langgraph_memory_agent import LangGraphMemoryAgent
+        from memory.agent import LangGraphMemoryAgent
         
         # Initialize agent
         print("🔧 Initializing LangGraph Memory Agent...")
@@ -112,8 +112,8 @@ def test_original_vs_langgraph():
     print("\n🔄 Comparing Original vs LangGraph Agent...")
     
     try:
-        from memory_agent import MemoryAgent
-        from langgraph_memory_agent import LangGraphMemoryAgent
+        from memory.core_agent import MemoryAgent
+        from memory.agent import LangGraphMemoryAgent
         
         # Initialize both agents
         original_agent = MemoryAgent()

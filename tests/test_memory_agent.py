@@ -23,7 +23,7 @@ def test_memory_agent():
         return False
     
     try:
-        from memory_agent import MemoryAgent
+        from memory.core_agent import MemoryAgent
         
         # Initialize agent
         print("🔧 Initializing Memory Agent...")

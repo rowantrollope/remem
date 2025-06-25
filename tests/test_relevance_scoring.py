@@ -17,7 +17,7 @@ from typing import Dict, List, Any
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from memory_core import MemoryCore, RelevanceConfig
+from memory.core import MemoryCore, RelevanceConfig
 
 
 def test_relevance_config():

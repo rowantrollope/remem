@@ -1,28 +1,11 @@
 """
-Main entry point for the LangGraph Memory Agent.
+Main entry point for the LangGraph Memory Agent CLI.
 """
 
 import os
 import sys
 from dotenv import load_dotenv
-from langgraph_memory_agent import LangGraphMemoryAgent
-
-import json
-from datetime import datetime
-from flask import Flask, render_template, request, jsonify
-from flask_cors import CORS  # Make sure this import is here
-from memory_agent import MemoryAgent
-
-app = Flask(__name__)
-
-# Add CORS with explicit configuration
-CORS(app, resources={
-    r"/api/*": {
-        "origins": ["http://localhost:3000", "http://localhost:3001"],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
+from memory.agent import LangGraphMemoryAgent
 
 def main():
     """Main function to run the memory agent."""

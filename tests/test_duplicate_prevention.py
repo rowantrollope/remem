@@ -3,7 +3,7 @@
 Test script to verify duplicate prevention is working correctly.
 """
 
-from langgraph_memory_agent import LangGraphMemoryAgent
+from memory.agent import LangGraphMemoryAgent
 
 def test_duplicate_prevention():
     """Test that duplicate memories are properly prevented."""

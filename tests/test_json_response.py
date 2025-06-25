@@ -25,7 +25,7 @@ def test_json_response_format():
         return False
     
     try:
-        from memory_agent import MemoryAgent
+        from memory.core_agent import MemoryAgent
         
         # Initialize agent
         print("🔧 Initializing Memory Agent...")

@@ -3,7 +3,7 @@
 Test script to verify conversation history is working in LangGraph Memory Agent.
 """
 
-from langgraph_memory_agent import LangGraphMemoryAgent
+from memory.agent import LangGraphMemoryAgent
 
 def test_conversation_history():
     """Test that conversation history is maintained across multiple exchanges."""

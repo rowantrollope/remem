@@ -1,6 +1,61 @@
 # LangGraph Memory Agent
 
-A sophisticated Redis-based memory system that provides intelligent memory storage, retrieval, and analysis using LangGraph workflow orchestration and OpenAI embeddings. This project focuses entirely on advanced memory capabilities for AI agents.
+A sophisticated Agent Memory API powered by Redis Vectorset. 
+
+Intelligent memory storage, retrieval, and analysis using Redis VectorSet and OpenAI embeddings. This project focuses entirely on advanced memory capabilities for AI agents.
+
+## 🎯 Entry Points & Quick Start
+
+This project provides **three main interfaces** for different use cases:
+
+### 1. **CLI Interface** - Interactive Memory Operations
+```bash
+# Interactive chat mode
+python main.py
+
+# Single query mode
+python main.py "Remember that I like pizza"
+```
+
+### 2. **Web API Server** - REST API + Web Interface
+```bash
+# Start the web server
+python web_app.py
+
+# Access web interface at http://localhost:5001
+# Use REST API endpoints like /api/memory, /api/chat
+```
+
+### 3. **LangGraph Workflow** - Advanced AI Orchestration
+```python
+from langgraph_memory_agent import LangGraphMemoryAgent
+
+agent = LangGraphMemoryAgent()
+response = agent.run("What restaurants have I been to?")
+```
+
+### 🚀 Quick Setup (5 minutes)
+
+1. **Start Redis 8:**
+   ```bash
+   docker run -d --name redis -p 6379:6379 redis:8
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Set OpenAI API key:**
+   ```bash
+   cp .env.example .env
+   # Edit .env and add: OPENAI_API_KEY=your_key_here
+   ```
+
+4. **Choose your interface:**
+   - CLI: `python main.py`
+   - Web: `python web_app.py` → visit http://localhost:5001
+   - Programmatic: Import `LangGraphMemoryAgent` in your code
 
 ## 🧠 Features
 
@@ -15,16 +70,15 @@ A sophisticated Redis-based memory system that provides intelligent memory stora
 
 ## Setup
 
-### 1. Install Redis Stack (includes RedisSearch)
+### 1. Install Redis 8 (includes RedisSearch)
 
 ```bash
 # Using Docker (recommended)
-docker run -d --name redis-stack -p 6381:6381 redis/redis-stack:latest
+docker run -d --name redis -p 6379:6379 redis:8
 
 # Or using Homebrew (macOS)
-brew tap redis-stack/redis-stack
-brew install redis-stack
-redis-stack-server --port 6381
+brew install redis
+redis-server --port 6379
 ```
 
 ### 2. Create Virtual Environment (Recommended)
@@ -96,13 +150,13 @@ Then visit http://localhost:5001 for the web interface.
 
 The memory agent uses a sophisticated multi-layer architecture:
 
-### 1. Core Memory Layer (`memory_agent.py`)
+### 1. Core Memory Layer (`memory/core_agent.py`)
 - **Vector Storage**: Uses Redis VectorSet for semantic memory storage
 - **Embeddings**: OpenAI text-embedding-ada-002 for vector representations
 - **Contextual Grounding**: Converts relative references (today, here) to absolute ones
 - **Confidence Analysis**: Sophisticated question answering with confidence scoring
 
-### 2. Tool Layer (`tools.py`)
+### 2. Tool Layer (`memory/tools.py`)
 - **Memory Tools**: LangChain tools that wrap core memory operations
 - **Tool Integration**: Seamless integration with LangGraph workflow
 

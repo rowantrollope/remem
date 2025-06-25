@@ -9,7 +9,7 @@ references like temporal, spatial, and personal references.
 import os
 import sys
 from datetime import datetime
-from memory_agent import MemoryAgent
+from memory.core_agent import MemoryAgent
 
 def test_contextual_grounding():
     """Test the contextual grounding functionality."""

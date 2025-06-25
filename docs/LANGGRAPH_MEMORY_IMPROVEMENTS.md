@@ -125,9 +125,9 @@ Extract:
 
 ## Technical Implementation
 
-- Enhanced prompts in `langgraph_memory_agent.py`
-- Improved extraction logic in `memory_extraction.py`
-- Better question answering in `memory_reasoning.py`
+- Enhanced prompts in `memory/agent.py`
+- Improved extraction logic in `memory/extraction.py`
+- Better question answering in `memory/reasoning.py`
 - New user profile summary functionality
 - More inclusive evaluation criteria
 - Expanded keyword detection for fallback scenarios

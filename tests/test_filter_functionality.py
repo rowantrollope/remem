@@ -6,7 +6,7 @@ Test script to verify filterBy functionality in memory agent
 import os
 import sys
 import json
-from memory_agent import MemoryAgent
+from memory.core_agent import MemoryAgent
 
 def test_filter_functionality():
     """Test the new filterBy parameter functionality."""

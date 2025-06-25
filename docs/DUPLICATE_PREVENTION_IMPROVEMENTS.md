@@ -28,7 +28,7 @@ Implemented comprehensive duplicate prevention at multiple levels:
 
 ## Technical Implementation
 
-### New Methods in `langgraph_memory_agent.py`:
+### New Methods in `memory/agent.py`:
 
 #### `_would_create_duplicates(conversation_text)`
 - Creates MD5 hash of conversation content
@@ -50,7 +50,7 @@ Implemented comprehensive duplicate prevention at multiple levels:
 - Groups similar memories together
 - Provides statistics and cleanup guidance
 
-### Enhanced `memory_extraction.py`:
+### Enhanced `memory/extraction.py`:
 
 #### `_is_duplicate_memory(memory_text, similarity_threshold)`
 - Searches for similar existing memories

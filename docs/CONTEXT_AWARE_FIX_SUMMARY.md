@@ -119,7 +119,7 @@ You should now see:
 
 ## 📊 **All Code Paths Now Fixed**
 
-✅ **LangGraph Agent** - `langgraph_memory_agent.py` (fixed previously)  
+✅ **LangGraph Agent** - `memory/agent.py` (fixed previously)
 ✅ **Chat Sessions** - `web_app.py` `_check_and_extract_memories()` (fixed now)  
 ✅ **K-LINE API** - `web_app.py` `/api/klines/extract` (fixed now)  
 ✅ **Tools API** - `tools.py` `extract_and_store_memories` (fixed previously)

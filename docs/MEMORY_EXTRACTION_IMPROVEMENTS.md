@@ -73,8 +73,8 @@ The improved system correctly handles all test cases:
 ### Files Modified
 
 1. **`web_app.py`**: Updated `_contains_extractable_info()` function with LLM-based evaluation
-2. **`langgraph_memory_agent.py`**: Updated `_contains_extractable_info()` function with LLM-based evaluation
-3. **`memory_extraction.py`**: Added pre-screening stage and improved extraction prompts
+2. **`memory/agent.py`**: Updated `_contains_extractable_info()` function with LLM-based evaluation
+3. **`memory/extraction.py`**: Added pre-screening stage and improved extraction prompts
 
 ### Key Functions
 

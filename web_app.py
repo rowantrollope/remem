@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Web UI for Memory Agent
+REST API for Memory Agent
 
-A minimalist Flask web interface for the memory agent.
 """
 
 import os
@@ -12,8 +11,8 @@ from datetime import datetime
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
-from langgraph_memory_agent import LangGraphMemoryAgent
-from memory_agent import MemoryAgent
+from memory.agent import LangGraphMemoryAgent
+from memory.core_agent import MemoryAgent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes

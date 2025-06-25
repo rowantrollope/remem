@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import the MemoryAgent
-from memory_agent import MemoryAgent
+from memory.core_agent import MemoryAgent
 
 def test_travel_agent_extraction():
     """Test memory extraction for a travel agent scenario."""

@@ -15,8 +15,8 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
-from memory_agent import MemoryAgent
-from tools import AVAILABLE_TOOLS, set_memory_agent
+from .core_agent import MemoryAgent
+from .tools import AVAILABLE_TOOLS, set_memory_agent
 
 # Load environment variables
 load_dotenv()
@@ -83,7 +83,7 @@ class LangGraphMemoryAgent:
         # Add edges
         workflow.add_edge("analyzer", "memory_agent")
         
-        # Add conditional edges from memory_agent
+        # Add conditional edges from memory agent
         workflow.add_conditional_edges(
             "memory_agent",
             self._should_use_tools,
@@ -93,7 +93,7 @@ class LangGraphMemoryAgent:
             }
         )
         
-        # Add edge from tools back to memory_agent for potential iteration
+        # Add edge from tools back to memory agent for potential iteration
         workflow.add_edge("tools", "memory_agent")
         
         # End at synthesizer

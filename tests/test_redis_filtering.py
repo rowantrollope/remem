@@ -99,7 +99,7 @@ def test_filter_expression_logic():
     
     passed = 0
     for test_case in test_cases:
-        # Simulate the filter construction logic from memory_core.py
+        # Simulate the filter construction logic from memory.core
         filter_expressions = []
         
         if test_case['filterBy']:
