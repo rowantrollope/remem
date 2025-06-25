@@ -11,6 +11,7 @@ import sys
 import uuid
 import json
 import re
+import time
 import numpy as np
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
@@ -628,16 +629,17 @@ Respond with a JSON object:
             print(f"❌ Memory storage error: {e}")
             raise
 
-    def search_memories(self, query: str, top_k: int = 3, filterBy: str = None) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> List[Dict[str, Any]]:
         """Search for relevant memories using VectorSet similarity.
 
         Args:
             query: Search query
             top_k: Number of top results to return
             filterBy: Optional filter expression for VSIM command
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
-            List of matching memories with metadata
+            List of matching memories with metadata that meet the minimum similarity threshold
         """
         # Get embedding for query
         query_embedding = self._get_embedding(query)
@@ -648,9 +650,10 @@ Respond with a JSON object:
             # VSIM vectorsetname VALUES LENGTH value1 value2 ... valueN [WITHSCORES] [COUNT count] [FILTER expression]
             cmd = ["VSIM", self.VECTORSET_KEY, "VALUES", str(self.EMBEDDING_DIM)] + query_vector_values + ["WITHSCORES", "COUNT", str(top_k)]
 
-            # Add FILTER parameter if provided
+            # Add user-provided filter if specified
             if filterBy:
                 cmd.extend(["FILTER", filterBy])
+                print(f"🔍 Using Redis filter: {filterBy}")
 
             result = self.redis_client.execute_command(*cmd)
 
@@ -676,9 +679,12 @@ Respond with a JSON object:
                             # Fallback to timestamp for older memories
                             created_at = datetime.fromtimestamp(metadata["timestamp"], timezone.utc).isoformat()
 
+                        # All memories are now nemes (atomic memories)
+                        display_text = metadata.get("final_text", metadata.get("raw_text", ""))
+
                         memory = {
                             "id": element_id,
-                            "text": metadata.get("final_text", metadata.get("raw_text", "")),
+                            "text": display_text,
                             "original_text": metadata.get("raw_text", ""),
                             "grounded_text": metadata.get("final_text", ""),
                             "tags": metadata.get("tags", []),
@@ -691,7 +697,9 @@ Respond with a JSON object:
                             # New temporal and usage fields with backward compatibility
                             "created_at": created_at,
                             "last_accessed_at": metadata.get("last_accessed_at", created_at),
-                            "access_count": metadata.get("access_count", 0)
+                            "access_count": metadata.get("access_count", 0),
+                            # All memories are now nemes (atomic memories)
+                            "type": "neme"
                         }
 
                         # Calculate enhanced relevance score
@@ -716,14 +724,60 @@ Respond with a JSON object:
             for memory in memories:
                 self._update_memory_access(memory["id"])
 
+            # Filter by minimum similarity score threshold and track included/excluded
+            included_memories = []
+            excluded_memories = []
+
+            if min_similarity > 0.0:
+                original_count = len(memories)
+                print(f"🔍 Applying similarity threshold filter (min_similarity: {min_similarity}):")
+
+                for i, memory in enumerate(memories, 1):
+                    score = memory.get("score", 0)
+                    memory_text = memory.get("text", "")[:60] + ("..." if len(memory.get("text", "")) > 60 else "")
+
+                    if score >= min_similarity:
+                        print(f"   ✅ INCLUDED #{i}: Score: {score:.3f} - '{memory_text}'")
+                        included_memories.append(memory)
+                    else:
+                        print(f"   ❌ EXCLUDED #{i}: Score: {score:.3f} - '{memory_text}' (below {min_similarity})")
+                        excluded_memories.append(memory)
+
+                memories = included_memories
+                filtered_count = len(memories)
+                print(f"🔍 Similarity filtering result: {original_count} → {filtered_count} memories")
+            else:
+                print(f"🔍 Similarity filtering: No memories removed (min_similarity: {min_similarity})")
+                included_memories = memories
+                excluded_memories = []
+
             # Sort by relevance score (highest first)
             memories.sort(key=lambda m: m.get("relevance_score", m.get("score", 0)), reverse=True)
 
-            return memories
+            print(f"Found {len(memories)} memories for query '{query}'")
+
+            # Return memories with filtering information
+            return {
+                'memories': memories,
+                'filtering_info': {
+                    'included_count': len(included_memories),
+                    'excluded_count': len(excluded_memories),
+                    'min_similarity_threshold': min_similarity,
+                    'excluded_memories': excluded_memories
+                }
+            }
 
         except Exception as e:
             print(f"❌ Memory search error: {e}")
-            return []
+            return {
+                'memories': [],
+                'filtering_info': {
+                    'included_count': 0,
+                    'excluded_count': 0,
+                    'min_similarity_threshold': min_similarity,
+                    'excluded_memories': []
+                }
+            }
 
     def delete_memory(self, memory_id: str) -> bool:
         """Delete a specific memory from the VectorSet.
@@ -936,3 +990,139 @@ Respond with a JSON object:
                 'error': f'Migration failed: {str(e)}',
                 'memories_migrated': 0
             }
+
+
+
+    def construct_kline(self, query: str, memories: List[Dict[str, Any]], answer: str = None,
+                       confidence: str = None, reasoning: str = None) -> Dict[str, Any]:
+        """Construct a K-line (mental state) from relevant memories.
+
+        This creates a temporary mental state that combines relevant memories into
+        a coherent, contextual representation suitable for LLM context windows.
+        K-lines are NOT stored - they exist only as temporary mental states.
+
+        Args:
+            query: The original query/question
+            memories: List of relevant memories to combine
+            answer: Optional answer text (for question-answering scenarios)
+            confidence: Optional confidence level
+            reasoning: Optional reasoning text
+
+        Returns:
+            Dictionary containing:
+            - mental_state: Formatted coherent text combining memories
+            - constituent_memories: List of memory IDs and texts
+            - coherence_score: How well memories relate to each other
+            - summary: Brief summary of the mental state
+        """
+        try:
+            if not memories:
+                return {
+                    "mental_state": "No relevant memories found for this query.",
+                    "constituent_memories": [],
+                    "coherence_score": 0.0,
+                    "summary": "Empty mental state"
+                }
+
+            print(f"🧠 K-LINE: Constructing mental state from {len(memories)} memories for query: '{query[:50]}...'")
+
+            # Extract memory information
+            memory_texts = []
+            memory_ids = []
+            memory_tags = []
+
+            for memory in memories:
+                text = memory.get('text', '')
+                if text:
+                    memory_texts.append(text)
+                    memory_ids.append(memory.get('id', ''))
+                    memory_tags.extend(memory.get('tags', []))
+
+            # Calculate coherence score based on tag overlap and relevance scores
+            coherence_score = self._calculate_coherence_score(memories, memory_tags)
+
+            # Format mental state as coherent narrative
+            mental_state = self._format_mental_state(query, memory_texts, answer, confidence, reasoning)
+
+            # Create summary
+            summary = f"Mental state combining {len(memory_texts)} memories"
+            if answer:
+                summary += f" to answer: {query[:50]}..."
+            else:
+                summary += f" related to: {query[:50]}..."
+
+            return {
+                "mental_state": mental_state,
+                "constituent_memories": [
+                    {"id": memory.get('id', ''), "text": memory.get('text', '')}
+                    for memory in memories
+                ],
+                "coherence_score": coherence_score,
+                "summary": summary,
+                "query": query,
+                "answer": answer,
+                "confidence": confidence,
+                "reasoning": reasoning
+            }
+
+        except Exception as e:
+            print(f"❌ K-LINE: Error constructing mental state: {e}")
+            return {
+                "mental_state": f"Error constructing mental state: {str(e)}",
+                "constituent_memories": [],
+                "coherence_score": 0.0,
+                "summary": "Error in mental state construction"
+            }
+
+    def _calculate_coherence_score(self, memories: List[Dict[str, Any]], all_tags: List[str]) -> float:
+        """Calculate how coherent/related the memories are to each other."""
+        if len(memories) <= 1:
+            return 1.0
+
+        # Tag overlap score
+        unique_tags = set(all_tags)
+        tag_overlap = len(all_tags) - len(unique_tags) if len(unique_tags) > 0 else 0
+        tag_score = min(tag_overlap / len(memories), 1.0)
+
+        # Relevance score consistency
+        scores = [mem.get('score', 0) for mem in memories]
+        if scores:
+            score_variance = sum((s - sum(scores)/len(scores))**2 for s in scores) / len(scores)
+            consistency_score = max(0, 1.0 - score_variance)
+        else:
+            consistency_score = 0.5
+
+        return (tag_score * 0.4 + consistency_score * 0.6)
+
+    def _format_mental_state(self, query: str, memory_texts: List[str], answer: str = None,
+                            confidence: str = None, reasoning: str = None) -> str:
+        """Format memories into a coherent mental state narrative."""
+        lines = []
+
+        # Header
+        lines.append(f"🧠 Mental State for: {query}")
+        lines.append("=" * 50)
+
+        # Answer section if provided
+        if answer:
+            lines.append(f"\n💡 Answer: {answer}")
+            if confidence:
+                lines.append(f"🎯 Confidence: {confidence}")
+            if reasoning:
+                lines.append(f"💭 Reasoning: {reasoning}")
+
+        # Memory integration
+        lines.append(f"\n📚 Relevant Knowledge ({len(memory_texts)} memories):")
+        for i, text in enumerate(memory_texts, 1):
+            lines.append(f"{i}. {text}")
+
+        # Synthesis
+        if len(memory_texts) > 1:
+            lines.append(f"\n🔗 This mental state combines {len(memory_texts)} related memories")
+            lines.append("to provide contextual understanding for the query.")
+
+        return "\n".join(lines)
+
+
+
+

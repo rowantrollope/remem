@@ -30,13 +30,14 @@ class MemoryReasoning:
         self.memory_processing = memory_processing
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None) -> Dict[str, Any]:
+    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.9) -> Dict[str, Any]:
         """Answer a question using relevant memories and OpenAI.
 
         Args:
             question: The question to answer
             top_k: Number of memories to retrieve for context
             filterBy: Optional filter expression for VSIM command
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.9)
 
         Returns:
             Dictionary with structured response containing:
@@ -58,11 +59,11 @@ class MemoryReasoning:
                 "supporting_memories": []
             }
 
-        # Use the optimized question for search
-        optimized_question = validation_result["content"]
+        # Use the embedding-optimized query for vector search, fallback to optimized question
+        embedding_query = validation_result.get("embedding_query") or validation_result["content"]
 
-        # Search for relevant memories
-        memories = self.memory_core.search_memories(optimized_question, top_k, filterBy)
+        # Search for relevant memories using embedding-optimized query
+        memories = self.memory_core.search_memories(embedding_query, top_k, filterBy, min_similarity)
 
         if not memories:
             return {
@@ -95,44 +96,52 @@ class MemoryReasoning:
 
         context_text = "\n".join(memory_context)
 
-        # Create enhanced system prompt for strict confidence analysis
-        system_prompt = """You are an expert memory analyst with a focus on accuracy and preventing hallucination. Your job is to answer questions based ONLY on the information explicitly provided in the memories.
+        # Create enhanced system prompt for comprehensive memory-based assistance
+        system_prompt = """You are an expert personal memory assistant with access to comprehensive user profile information. Your job is to provide helpful, personalized answers based on the user's stored memories while being accurate about what you know and don't know.
+
+CORE MISSION:
+Provide personalized, helpful assistance by leveraging the user's stored memories to understand their preferences, context, constraints, and needs. Use this information to give tailored advice and answers.
 
 CRITICAL INSTRUCTIONS:
-1. Only use information that is explicitly stated in the memories
-2. Do NOT infer, assume, or extrapolate beyond what is directly stated
-3. If memories don't contain sufficient information to answer the question, be honest about it
-4. Be extremely conservative with confidence levels
-5. The memories have already been filtered for relevance, but still verify they actually answer the question
+1. Use ALL relevant information from the memories to provide personalized assistance
+2. When memories contain relevant information, use it to give specific, tailored advice
+3. If memories don't contain sufficient information, be honest about what's missing
+4. Consider the user's preferences, constraints, and context when formulating answers
+5. Connect related memories to provide comprehensive, personalized responses
 
 Your task is to analyze the provided memories and respond with a JSON object containing:
-1. "answer": A clear, direct answer based ONLY on explicit information in memories, or state what information is missing
-2. "confidence": One of "high", "medium", or "low" based on how directly the memories answer the question
-3. "reasoning": Detailed explanation of your confidence level and exactly which memories support your answer
+1. "answer": A helpful, personalized answer that leverages relevant memory information, or explanation of what information is needed
+2. "confidence": One of "high", "medium", or "low" based on how well the memories support a personalized response
+3. "reasoning": Detailed explanation of how you used the memories and why you chose this confidence level
 
-STRICT Confidence levels:
-- "high": Memories contain explicit, direct, and complete information that fully answers the question
-- "medium": Memories contain some relevant information but may be incomplete or require minor interpretation
-- "low": Memories are related but don't contain enough explicit information to answer the question confidently, OR no memories are truly relevant
+ENHANCED Confidence levels:
+- "high": Memories contain comprehensive, relevant information that enables a highly personalized and complete answer
+- "medium": Memories contain some relevant information that enables a partially personalized answer, but some details may be missing
+- "low": Memories contain limited relevant information, requiring a more general answer or indicating what information is needed
 
-IMPORTANT: If the memories don't actually answer the question, say so clearly. Don't try to piece together an answer from unrelated information.
+PERSONALIZATION APPROACH:
+- Use family information to tailor recommendations (family size, ages, dietary needs)
+- Apply budget constraints and preferences to suggestions
+- Consider past experiences and preferences when making recommendations
+- Factor in location, accessibility needs, and other personal context
+- Connect multiple memories to provide comprehensive, personalized advice
 
 Your response must be valid JSON in this exact format:
 {
-  "answer": "Direct answer based only on explicit memory content, or explanation of what information is missing",
+  "answer": "Personalized answer leveraging relevant memories, or explanation of what information would help provide better assistance",
   "confidence": "high|medium|low",
-  "reasoning": "Detailed explanation citing specific memories and why confidence level was chosen"
+  "reasoning": "Detailed explanation of how memories were used and why this confidence level was chosen"
 }
 
-Be honest and conservative. It's better to say "I don't have enough information" than to hallucinate an answer."""
+Be helpful and personalized while being honest about the limits of available information."""
 
         # Use the original question in the prompt to maintain user context
         user_prompt = f"""Question: {question}
 
-Available memories (already filtered for relevance):
+Available user memories (already filtered for relevance):
 {context_text}
 
-Please answer the question based ONLY on these memories. If the memories don't contain sufficient information to answer the question, be honest about it. Do not make assumptions or inferences beyond what is explicitly stated."""
+Please provide a helpful, personalized answer using the relevant information from these memories. Consider the user's preferences, constraints, family situation, past experiences, and other personal context when formulating your response. If the memories don't contain sufficient information for a complete answer, explain what additional information would be helpful and provide what guidance you can based on what you know about the user."""
 
         try:
             # Call OpenAI to generate the answer

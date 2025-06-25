@@ -70,7 +70,7 @@ def test_contextual_grounding():
         
         for query in test_queries:
             print(f"\n--- Query: '{query}' ---")
-            memories = agent.search_memories(query, top_k=3)
+            memories = agent.search_memories(query, top_k=10)
             
             if memories:
                 for j, memory in enumerate(memories, 1):
@@ -146,7 +146,7 @@ def test_without_grounding():
             agent.store_memory(memory, apply_grounding=False)
         
         print("\n🔍 Searching memories stored without grounding...")
-        memories = agent.search_memories("What's the weather like in Jakarta?", top_k=3)
+        memories = agent.search_memories("What's the weather like in Jakarta?", top_k=10)
         
         print("Results from non-grounded memories:")
         for i, memory in enumerate(memories, 1):

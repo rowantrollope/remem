@@ -47,7 +47,7 @@ def store_memory(memory_text: str, apply_grounding: bool = True) -> str:
         return f"Error storing memory: {str(e)}"
 
 @tool
-def search_memories(query: str, top_k: int = 3, filter_expr: str = None) -> str:
+def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str:
     """Search for relevant memories using vector similarity.
 
     Args:
@@ -62,7 +62,16 @@ def search_memories(query: str, top_k: int = 3, filter_expr: str = None) -> str:
         return "Error: Memory agent not initialized"
 
     try:
-        memories = _memory_agent.search_memories(query, top_k, filter_expr)
+        # Use embedding optimization for better vector similarity search
+        validation_result = _memory_agent.processing.validate_and_preprocess_question(query)
+
+        if validation_result["type"] == "search":
+            # Use the embedding-optimized query for vector search
+            search_query = validation_result.get("embedding_query") or validation_result["content"]
+            memories = _memory_agent.search_memories(search_query, top_k, filter_expr)
+        else:
+            # For help queries, still search but with original query
+            memories = _memory_agent.search_memories(query, top_k, filter_expr)
 
         # Format memories for LLM consumption
         formatted_memories = []
@@ -215,11 +224,16 @@ def format_memory_results(memories_json: str) -> str:
         # Convert to the format expected by format_memory_results
         formatted_memories = []
         for memory in memories:
+            # Handle both possible score formats
+            score = memory.get("relevance_score", memory.get("score", 0))
+            if score > 1:  # If score is in 0-100 range, convert to 0-1
+                score = score / 100.0
+
             formatted_memories.append({
                 "text": memory["text"],
-                "score": memory["relevance_score"] / 100.0,  # Convert back to 0-1 scale
-                "formatted_time": memory["timestamp"],
-                "tags": memory["tags"]
+                "score": score,
+                "formatted_time": memory.get("timestamp", memory.get("formatted_time", "")),
+                "tags": memory.get("tags", [])
             })
 
         return _memory_agent.format_memory_results(formatted_memories)
@@ -227,15 +241,16 @@ def format_memory_results(memories_json: str) -> str:
         return f"Error formatting memories: {str(e)}"
 
 @tool
-def extract_and_store_memories(raw_input: str, context_prompt: str) -> str:
+def extract_and_store_memories(raw_input: str, context_prompt: str, existing_memories_json: str = None) -> str:
     """Extract and store valuable memories from conversational data using intelligent LLM analysis.
 
-    This tool analyzes conversational input to identify and store only the most valuable information
-    for long-term retention, filtering out conversational noise and temporary information.
+    This tool analyzes conversational input to identify and store only NEW information that is not
+    already captured in existing memories, avoiding duplicates through context-aware extraction.
 
     Args:
         raw_input: The conversational data to analyze (e.g., recent chat messages)
         context_prompt: Application context to guide extraction (e.g., "I am a travel agent app")
+        existing_memories_json: Optional JSON string of existing memories to avoid duplicates
 
     Returns:
         JSON string with extraction results including extracted memories and summary
@@ -244,10 +259,19 @@ def extract_and_store_memories(raw_input: str, context_prompt: str) -> str:
         return "Error: Memory agent not initialized"
 
     try:
+        # Parse existing memories if provided
+        existing_memories = None
+        if existing_memories_json:
+            try:
+                existing_memories = json.loads(existing_memories_json)
+            except json.JSONDecodeError:
+                print("⚠️ Warning: Could not parse existing_memories_json, proceeding without context")
+
         result = _memory_agent.extract_and_store_memories(
             raw_input=raw_input,
             context_prompt=context_prompt,
-            apply_grounding=True
+            apply_grounding=True,
+            existing_memories=existing_memories
         )
 
         # Format for LLM consumption
@@ -255,6 +279,7 @@ def extract_and_store_memories(raw_input: str, context_prompt: str) -> str:
             "success": True,
             "total_extracted": result["total_extracted"],
             "total_filtered": result["total_filtered"],
+            "duplicates_skipped": result.get("duplicates_skipped", 0),
             "extraction_summary": result["extraction_summary"],
             "extracted_memories": [
                 {
@@ -270,6 +295,41 @@ def extract_and_store_memories(raw_input: str, context_prompt: str) -> str:
     except Exception as e:
         return f"Error extracting memories: {str(e)}"
 
+@tool
+def find_duplicate_memories(similarity_threshold: float = 0.9) -> str:
+    """Find potential duplicate memories in the system.
+
+    This tool helps identify and manage duplicate memories that may have been
+    stored multiple times, allowing for cleanup and optimization.
+
+    Args:
+        similarity_threshold: Similarity threshold for duplicate detection (0.0-1.0, default: 0.9)
+
+    Returns:
+        JSON string with duplicate groups and statistics
+    """
+    if not _memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        # Use the LangGraph agent's find_duplicate_memories method if available
+        if hasattr(_memory_agent, 'find_duplicate_memories'):
+            result = _memory_agent.find_duplicate_memories(similarity_threshold)
+        else:
+            # Fallback to basic duplicate detection
+            all_memories = _memory_agent.search_memories("", top_k=100, min_similarity=0.0)
+            result = {
+                "message": "Basic duplicate detection not available",
+                "total_memories": len(all_memories),
+                "duplicate_groups": [],
+                "potential_duplicates": 0
+            }
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        return f"Error finding duplicates: {str(e)}"
+
 # List of available memory tools
 AVAILABLE_TOOLS = [
     store_memory,
@@ -279,5 +339,6 @@ AVAILABLE_TOOLS = [
     analyze_question_type,
     answer_with_confidence,
     format_memory_results,
-    extract_and_store_memories
+    extract_and_store_memories,
+    find_duplicate_memories
 ]

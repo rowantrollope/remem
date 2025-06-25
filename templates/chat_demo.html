@@ -332,7 +332,7 @@ You're helping students learn programming.`
                 this.startChatBtn.disabled = true;
 
                 try {
-                    const response = await fetch(`${this.baseUrl}/api/chat/session`, {
+                    const response = await fetch(`${this.baseUrl}/api/agent/session`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -389,7 +389,7 @@ You're helping students learn programming.`
                 const typingDiv = this.addTypingIndicator();
 
                 try {
-                    const response = await fetch(`${this.baseUrl}/api/chat/session/${this.sessionId}`, {
+                    const response = await fetch(`${this.baseUrl}/api/agent/session/${this.sessionId}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message })

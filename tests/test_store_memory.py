@@ -25,7 +25,7 @@ def test_store_memory_functionality():
         }
     }
     
-    response = requests.post(f"{BASE_URL}/api/chat/session", json=session_data)
+    response = requests.post(f"{BASE_URL}/api/agent/session", json=session_data)
     if response.status_code != 200:
         print(f"❌ Failed to create session: {response.text}")
         return

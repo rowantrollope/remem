@@ -37,7 +37,7 @@ def test_memory_disabled_session():
     
     # Send a message
     message_data = {"message": "I want to plan a trip to Japan"}
-    response = requests.post(f"{BASE_URL}/api/chat/session/{session_id}", json=message_data)
+    response = requests.post(f"{BASE_URL}/api/agent/session/{session_id}", json=message_data)
     
     if response.status_code != 200:
         print(f"❌ Failed to send message: {response.text}")
@@ -65,7 +65,7 @@ def test_memory_enabled_session():
         }
     }
     
-    response = requests.post(f"{BASE_URL}/api/chat/session", json=session_data)
+    response = requests.post(f"{BASE_URL}/api/agent/session", json=session_data)
     if response.status_code != 200:
         print(f"❌ Failed to create session: {response.text}")
         return None
@@ -85,7 +85,7 @@ def test_memory_enabled_session():
     for i, message in enumerate(messages, 1):
         print(f"\n--- Message {i} ---")
         message_data = {"message": message}
-        response = requests.post(f"{BASE_URL}/api/chat/session/{session_id}", json=message_data)
+        response = requests.post(f"{BASE_URL}/api/agent/session/{session_id}", json=message_data)
         
         if response.status_code != 200:
             print(f"❌ Failed to send message: {response.text}")
@@ -114,7 +114,7 @@ def test_session_info():
         "config": {"use_memory": True}
     }
     
-    response = requests.post(f"{BASE_URL}/api/chat/session", json=session_data)
+    response = requests.post(f"{BASE_URL}/api/agent/session", json=session_data)
     if response.status_code != 200:
         print(f"❌ Failed to create session: {response.text}")
         return
@@ -122,7 +122,7 @@ def test_session_info():
     session_id = response.json()['session_id']
     
     # Get session info
-    response = requests.get(f"{BASE_URL}/api/chat/session/{session_id}")
+    response = requests.get(f"{BASE_URL}/api/agent/session/{session_id}")
     if response.status_code != 200:
         print(f"❌ Failed to get session info: {response.text}")
         return

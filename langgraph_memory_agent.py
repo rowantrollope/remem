@@ -53,8 +53,14 @@ class LangGraphMemoryAgent:
 
         # Conversation buffer for memory extraction
         self.conversation_buffer = []
-        self.extraction_threshold = 2  # Extract after 3 meaningful exchanges
-        self.extraction_context = "I am a personal assistant. Extract user preferences, constraints, and important personal information."
+        self.extraction_threshold = 3  # Extract after 3 meaningful exchanges to reduce over-extraction
+        self.extraction_context = "I am a personal assistant. Extract only significant new user information like preferences, constraints, or important personal details that would be valuable for future assistance. Be selective and avoid extracting minor details or temporary information."
+
+        # Note: Duplicate prevention now handled by context-aware extraction
+
+        # Conversation history for LangGraph context
+        self.conversation_history = []  # Store LangGraph messages for context
+        self.max_history_length = 20  # Keep last 20 messages (10 exchanges)
 
         # Build the graph
         self.graph = self._build_graph()
@@ -114,49 +120,91 @@ class LangGraphMemoryAgent:
     def _call_memory_model(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Call the language model with memory-specific system prompt."""
         messages = state.get("messages", [])
-        
+        custom_system_prompt = state.get("custom_system_prompt")
+
         # Add system message if this is the first call or if we need to refresh context
         if not any(isinstance(msg, SystemMessage) for msg in messages):
-            system_msg = SystemMessage(content="""You are an intelligent memory assistant with access to sophisticated memory tools. Your primary goals are:
+            if custom_system_prompt:
+                # Use custom system prompt with focused memory tools context
+                system_content = f"""{custom_system_prompt}
 
-1. **PROACTIVE MEMORY EXTRACTION**: Automatically identify and extract valuable information from conversations
-2. **HELPFUL RESPONSES**: Provide immediate assistance using existing memories
-3. **CONTINUOUS LEARNING**: Build long-term understanding of user preferences and context
+**Memory Tools Available**:
+- search_memories: Find relevant existing memories using vector similarity search
+- extract_and_store_memories: Extract only NEW significant information not already stored
+- answer_with_confidence: Answer questions with confidence analysis
 
-Available memory tools:
-- store_memory: Store individual memories with contextual grounding
-- search_memories: Find relevant memories using vector similarity search
-- answer_with_confidence: Answer questions with sophisticated confidence analysis
-- extract_and_store_memories: **NEW** - Intelligently extract multiple memories from conversational data
-- format_memory_results: Format memory search results for display
-- set_context: Set current context (location, activity, people) for better memory grounding
-- get_memory_stats: Get statistics about stored memories
-- analyze_question_type: Analyze what type of question the user is asking
+**Memory Strategy**:
+1. **SEARCH MEMORIES FIRST**: Always use search_memories to find relevant information about the user before responding
+2. **USE CONTEXT**: Include relevant memories in your response to provide personalized assistance
+3. **SELECTIVE EXTRACTION**: Only extract significant new information that would be valuable for future assistance
+4. **AVOID OVER-EXTRACTION**: Don't store minor details, temporary information, or duplicates
 
-**MEMORY EXTRACTION STRATEGY**:
-When users share personal information, preferences, constraints, or important details, you should:
+**What to Extract**:
+- Important preferences (dietary restrictions, travel preferences, etc)
+- Significant constraints (budget limits, accessibility needs, etc)
+- Key personal details (family composition, location, etc)
+- Major plans or goals
+- Explicit details that might be useful based on the conversation and the type of assistant you are. For example a travel agent might find it useful to remember that the user has been to Italy before.
 
-1. **IMMEDIATE RESPONSE**: First, provide a helpful response to their message
-2. **SMART EXTRACTION**: Then use extract_and_store_memories to capture valuable information
+**What NOT to Extract**:
+- Minor conversational details
+- Temporary information
+- Information already stored
+- Assistant responses
 
-**Extract memories when users mention**:
-- Preferences: "I prefer...", "I like...", "I hate...", "I always..."
-- Constraints: "My budget is...", "I need...", "I can't..."
-- Personal details: Family info, dietary restrictions, accessibility needs
-- Important facts: Names, dates, locations, relationships
+**CRITICAL WORKFLOW - FOLLOW THIS FOR EVERY REQUEST**:
+For every user request:
+1. **ALWAYS START** with search_memories to find relevant information about the user
+2. **USE THE CONTEXT** from retrieved memories in your response
+3. **PROVIDE PERSONALIZED HELP** based on what you know about them
+4. **OPTIONALLY** extract new information if significant
 
-**Example flow**:
-User: "I prefer window seats when flying and my wife is vegetarian"
-1. Respond: "Got it! I'll remember your seating preference and your wife's dietary needs."
-2. Extract: Use extract_and_store_memories with context like "I am a travel agent app"
+**Example**:
+User: "give me some recommendations for things we can do"
+1. **MUST DO**: search_memories("user travel plans family preferences")
+2. **USE RESULTS**: Found memories like "user has 213 kids", "all kids are vegetarians", "planning trip to Paris"
+3. **PERSONALIZED RESPONSE**: "Based on your trip to Paris with your 213 vegetarian kids, here are some recommendations..."
 
-**For questions**: Use answer_with_confidence for sophisticated analysis with confidence scoring.
+**NEVER** respond without first searching for relevant user context!
 
-**Context prompts for extraction**:
-- Travel: "I am a travel agent app. Extract user preferences, constraints, and personal details."
-- General: "I am a personal assistant. Extract user preferences and important information."
+Be helpful and conversational while being selective about what information is worth remembering."""
+            else:
+                # Use focused default memory-focused system prompt
+                system_content = """You are a helpful assistant with memory capabilities. Your goal is to provide excellent assistance while selectively remembering important information for future interactions.
 
-Always be proactive about learning while being helpful and conversational.""")
+**Memory Tools Available**:
+- search_memories: Find relevant existing memories
+- extract_and_store_memories: Store only significant new information
+- answer_with_confidence: Answer questions with confidence analysis
+
+**Memory Approach**:
+1. **SEARCH FIRST**: Always use search_memories to find relevant information about the user before responding
+2. **USE CONTEXT**: Include relevant memories in your response to provide personalized assistance
+3. **SELECTIVE MEMORY**: Only remember significant information that would improve future assistance
+4. **AVOID DUPLICATES**: Don't store information that's already captured
+
+**Remember These Types of Information**:
+- Important preferences (dietary restrictions, travel preferences)
+- Significant constraints (budget limits, accessibility needs)
+- Key personal details (family size, location)
+- Major plans or goals
+
+**Don't Remember**:
+- Minor conversational details
+- Temporary information
+- Information already stored
+- Your own responses
+
+**CRITICAL WORKFLOW - FOLLOW THIS FOR EVERY REQUEST**:
+For every user request:
+1. **ALWAYS START** with search_memories to find relevant information about the user
+2. **USE THE CONTEXT** from retrieved memories in your response
+3. **PROVIDE PERSONALIZED HELP** based on what you know about them
+4. **OPTIONALLY** extract new information if significant
+
+**NEVER** respond without first searching for relevant user context!"""
+
+            system_msg = SystemMessage(content=system_content)
             messages = [system_msg] + messages
         
         response = self.llm_with_tools.invoke(messages)
@@ -225,11 +273,12 @@ Always be proactive about learning while being helpful and conversational.""")
         state["response_complete"] = True
         return state
     
-    def run(self, user_input: str) -> str:
+    def run(self, user_input: str, system_prompt: str = None) -> str:
         """Run the agent with user input and automatic memory extraction.
 
         Args:
             user_input: The user's message
+            system_prompt: Optional custom system prompt to override default
 
         Returns:
             The agent's response
@@ -243,9 +292,23 @@ Always be proactive about learning while being helpful and conversational.""")
             "timestamp": self._get_timestamp()
         })
 
-        # Initialize state with user message
+        # Add current user message to conversation history
+        current_user_message = HumanMessage(content=user_input)
+
+        # Build messages list with conversation history + current message
+        messages_for_graph = []
+
+        # Include recent conversation history (limit to avoid token limits)
+        recent_history = self.conversation_history[-self.max_history_length:]
+        messages_for_graph.extend(recent_history)
+
+        # Add current user message
+        messages_for_graph.append(current_user_message)
+
+        # Initialize state with conversation history and optional custom system prompt
         initial_state = {
-            "messages": [HumanMessage(content=user_input)]
+            "messages": messages_for_graph,
+            "custom_system_prompt": system_prompt
         }
 
         # Run the graph
@@ -266,6 +329,14 @@ Always be proactive about learning while being helpful and conversational.""")
             "timestamp": self._get_timestamp()
         })
 
+        # Add both user message and assistant response to conversation history
+        self.conversation_history.append(current_user_message)
+        self.conversation_history.append(final_message)
+
+        # Trim conversation history to prevent memory bloat
+        if len(self.conversation_history) > self.max_history_length:
+            self.conversation_history = self.conversation_history[-self.max_history_length:]
+
         # Check if we should extract memories from recent conversation
         self._check_and_extract_memories()
 
@@ -277,30 +348,48 @@ Always be proactive about learning while being helpful and conversational.""")
         return datetime.now().isoformat()
 
     def _check_and_extract_memories(self):
-        """Check if conversation buffer should trigger memory extraction."""
+        """Check if conversation buffer should trigger memory extraction using context-aware approach."""
         # Only extract if we have enough conversation
         if len(self.conversation_buffer) < self.extraction_threshold * 2:  # *2 for user+assistant pairs
             return
 
         # Check if recent messages contain extractable information
-        recent_messages = self.conversation_buffer[-6:]  # Last 3 exchanges
+        recent_messages = self.conversation_buffer[-4:]  # Last 2 exchanges
         if not self._contains_extractable_info(recent_messages):
             return
 
-        # Extract memories from recent conversation
+        # Extract memories from recent conversation using context-aware approach
         try:
             conversation_text = self._format_conversation_for_extraction(recent_messages)
 
-            # Extract directly using the memory agent
+            # STEP 1: Search for existing relevant memories first
+            print("🔍 MEMORY: Searching for existing relevant memories...")
+            existing_memories = self.memory_agent.search_memories(
+                conversation_text,
+                top_k=5,
+                min_similarity=0.8  # Higher threshold to be more selective
+            )
+
+            if existing_memories:
+                print(f"📚 MEMORY: Found {len(existing_memories)} existing relevant memories")
+                for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
+                    mem_text = mem.get('text', mem.get('final_text', ''))
+                    print(f"   📝 {i}. {mem_text}")
+            else:
+                print("📚 MEMORY: No existing relevant memories found")
+
+            # STEP 2: Extract with existing memories context to avoid duplicates
             result = self.memory_agent.extract_and_store_memories(
                 raw_input=conversation_text,
                 context_prompt=self.extraction_context,
-                store_raw=False,
-                apply_grounding=True
+                apply_grounding=True,
+                existing_memories=existing_memories  # Pass existing memories for context
             )
 
             if result["total_extracted"] > 0:
-                print(f"🧠 MEMORY: Auto-extracted {result['total_extracted']} memories from conversation")
+                print(f"🧠 MEMORY: Auto-extracted {result['total_extracted']} NEW memories from conversation")
+            else:
+                print("🔍 MEMORY: No new memories extracted - information already captured or not valuable")
 
             # Clear processed messages from buffer (keep last 2 for context)
             self.conversation_buffer = self.conversation_buffer[-2:]
@@ -309,38 +398,39 @@ Always be proactive about learning while being helpful and conversational.""")
             print(f"⚠️ MEMORY: Auto-extraction failed: {e}")
 
     def _contains_extractable_info(self, messages) -> bool:
-        """Check if messages contain information worth extracting using LLM evaluation."""
+        """Check if messages contain information worth extracting using enhanced LLM evaluation."""
         # Combine messages into conversation text
         conversation_text = ' '.join([msg['text'] for msg in messages])
 
         # Skip very short messages
-        if len(conversation_text.strip()) < 10:
+        if len(conversation_text.strip()) < 5:
             return False
 
         # Use LLM to evaluate if the text contains extractable information
         try:
-            evaluation_prompt = f"""You are an intelligent memory evaluation system. Your task is to determine if the following conversational text contains information that would be valuable to remember for future interactions.
+            evaluation_prompt = f"""You are a selective memory evaluation system. Your task is to determine if the following conversational text contains SIGNIFICANT information that would be valuable for future assistance.
 
-VALUABLE INFORMATION INCLUDES:
-- Personal preferences (likes, dislikes, habits)
-- Constraints and requirements (budget, time, accessibility needs)
-- Personal details (family, dietary restrictions, important dates)
-- Factual information about people, places, or things
-- Goals and intentions
-- Important contextual details
+SIGNIFICANT INFORMATION INCLUDES:
+- Important preferences (dietary restrictions, travel preferences)
+- Key constraints (budget limits, accessibility needs)
+- Essential personal details (family composition, location)
+- Major plans or goals (upcoming trips, important events)
+- Significant experiences that would affect future recommendations
 
-STRICTLY IGNORE:
-- Temporary information (current weather, today's schedule, immediate tasks)
-- Conversational filler or pleasantries ("Hi there", "How are you?")
-- General questions without personal context ("What's the best way to...")
-- Information requests that don't reveal user preferences
-- Time-sensitive information that won't be relevant later
+IGNORE (be conservative):
+- Minor conversational details or temporary information
+- Vague preferences or uncertain information
+- Information that's too specific to be useful later
 - Assistant responses or suggestions
+- Conversational filler ("Hi", "Thanks", "Okay")
+- Current mood or temporary states
 
 CONVERSATIONAL TEXT TO EVALUATE:
 "{conversation_text}"
 
-Respond with ONLY "YES" if the text contains valuable information worth remembering, or "NO" if it doesn't. Do not include any explanation."""
+Be SELECTIVE - only respond "YES" if the text contains information that would significantly improve future assistance. When in doubt, respond "NO".
+
+Respond with ONLY "YES" or "NO"."""
 
             response = self.llm.invoke([{"role": "user", "content": evaluation_prompt}])
             result = response.content.strip().upper()
@@ -351,25 +441,313 @@ Respond with ONLY "YES" if the text contains valuable information worth remember
             return self._contains_extractable_info_fallback(messages)
 
     def _contains_extractable_info_fallback(self, messages) -> bool:
-        """Fallback keyword-based approach for checking extractable information."""
-        extractable_keywords = [
-            'prefer', 'like', 'love', 'hate', 'dislike', 'always', 'never', 'usually',
-            'budget', 'family', 'wife', 'husband', 'kids', 'children', 'allergic', 'allergy',
-            'need', 'want', 'can\'t', 'cannot', 'must', 'have to', 'dietary', 'vegetarian',
-            'vegan', 'gluten', 'accessibility', 'wheelchair', 'mobility', 'window seat',
-            'aisle seat', 'michelin', 'restaurant', 'hotel', 'flight', 'travel'
+        """Conservative fallback keyword-based approach for checking extractable information."""
+        # Only look for truly significant information indicators
+        significant_keywords = [
+            # Important dietary restrictions
+            'allergic', 'allergy', 'vegetarian', 'vegan', 'gluten', 'lactose', 'diabetic', 'kosher', 'halal',
+            # Family composition
+            'family of', 'my wife', 'my husband', 'my kids', 'my children', 'my son', 'my daughter',
+            # Budget constraints
+            'budget is', 'budget of', 'can spend', 'maximum', 'limit',
+            # Accessibility needs
+            'wheelchair', 'accessibility', 'disability',
+            # Location
+            'live in', 'from',
+            # Major preferences
+            'always prefer', 'never', 'hate when', 'love when'
         ]
 
         conversation_text = ' '.join([msg['text'] for msg in messages]).lower()
-        return any(keyword in conversation_text for keyword in extractable_keywords)
+        return any(keyword in conversation_text for keyword in significant_keywords)
 
     def _format_conversation_for_extraction(self, messages) -> str:
         """Format conversation messages for memory extraction."""
         return '\n'.join([f"{msg['sender'].title()}: {msg['text']}" for msg in messages])
 
+    def _would_create_duplicates(self, conversation_text: str) -> bool:
+        """Check if the conversation text would likely create duplicate memories."""
+        import hashlib
+
+        # Create a hash of the conversation content
+        content_hash = hashlib.md5(conversation_text.encode()).hexdigest()
+
+        # Check if we've processed very similar content recently
+        if content_hash in self.recent_extraction_hashes:
+            return True
+
+        # Also check for semantic similarity with recent extractions
+        # Search for similar content in recent memories
+        try:
+            # Extract key phrases from the conversation for similarity check
+            key_phrases = self._extract_key_phrases(conversation_text)
+            if not key_phrases:
+                return False
+
+            # Search for each key phrase in recent memories
+            for phrase in key_phrases:
+                recent_memories = self.memory_agent.search_memories(phrase, top_k=3, min_similarity=0.85)
+                if recent_memories:
+                    # Check if any recent memory is very similar and recent (within last hour)
+                    from datetime import datetime, timedelta
+                    one_hour_ago = datetime.now() - timedelta(hours=1)
+
+                    for memory in recent_memories:
+                        if not isinstance(memory, dict):
+                            continue
+
+                        memory_score = memory.get('score', 0)
+                        memory_time_str = memory.get('timestamp', '')
+
+                        if memory_time_str and memory_score > 0.9:
+                            try:
+                                # Handle both timestamp formats
+                                if isinstance(memory_time_str, (int, float)):
+                                    memory_time = datetime.fromtimestamp(memory_time_str)
+                                else:
+                                    memory_time = datetime.fromisoformat(str(memory_time_str).replace('Z', '+00:00'))
+
+                                if memory_time > one_hour_ago:
+                                    print(f"🔄 MEMORY: Found very similar recent memory: {memory.get('text', '')[:50]}...")
+                                    return True
+                            except Exception as e:
+                                print(f"⚠️ MEMORY: Error parsing timestamp: {e}")
+                                continue
+
+        except Exception as e:
+            print(f"⚠️ MEMORY: Duplicate check failed: {e}")
+
+        return False
+
+    def _extract_key_phrases(self, text: str) -> list:
+        """Extract key phrases from text for duplicate detection."""
+        # Simple keyword extraction - could be enhanced with NLP
+        import re
+
+        # Remove common words and extract meaningful phrases
+        text_lower = text.lower()
+
+        # Look for specific patterns that indicate factual information
+        patterns = [
+            r'planning (?:a )?trip to (\w+)',
+            r'family of (\d+)',
+            r'(?:wife|husband|spouse) is (\w+)',
+            r'prefer (\w+(?:\s+\w+)*)',
+            r'budget (?:is|of) ([\d,]+)',
+            r'allergic to (\w+)',
+            r'live in (\w+)',
+            r'work (?:as|in) (\w+)',
+        ]
+
+        key_phrases = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text_lower)
+            key_phrases.extend(matches)
+
+        # Also extract noun phrases (simple approach)
+        words = re.findall(r'\b\w+\b', text_lower)
+        important_words = [word for word in words if len(word) > 3 and word not in [
+            'that', 'this', 'with', 'have', 'will', 'would', 'could', 'should',
+            'going', 'want', 'need', 'like', 'love', 'hate', 'prefer'
+        ]]
+
+        # Take combinations of important words
+        for i in range(len(important_words) - 1):
+            phrase = f"{important_words[i]} {important_words[i+1]}"
+            if len(phrase) > 6:  # Only meaningful phrases
+                key_phrases.append(phrase)
+
+        return key_phrases[:5]  # Return top 5 key phrases
+
+    def _store_extraction_hash(self, conversation_text: str):
+        """Store hash of extracted conversation to prevent future duplicates."""
+        import hashlib
+
+        content_hash = hashlib.md5(conversation_text.encode()).hexdigest()
+        self.recent_extraction_hashes.append(content_hash)
+
+        # Keep only recent hashes
+        if len(self.recent_extraction_hashes) > self.max_hash_history:
+            self.recent_extraction_hashes = self.recent_extraction_hashes[-self.max_hash_history:]
+
     def set_extraction_context(self, context_prompt: str):
         """Set the context prompt for automatic memory extraction."""
         self.extraction_context = context_prompt
+
+    def clear_conversation_history(self):
+        """Clear the conversation history to start fresh."""
+        self.conversation_history = []
+        self.conversation_buffer = []
+        print("🔄 MEMORY: Conversation history cleared")
+
+    def show_conversation_history(self):
+        """Show the current conversation history for debugging."""
+        print(f"💬 CONVERSATION HISTORY ({len(self.conversation_history)} messages):")
+        for i, msg in enumerate(self.conversation_history, 1):
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+            print(f"   {i}. {role}: {content}")
+        if not self.conversation_history:
+            print("   (No conversation history)")
+        print()
+
+    def get_user_profile_summary(self) -> str:
+        """Get a comprehensive summary of what the agent knows about the user.
+
+        This method searches for various types of user information and provides
+        a structured summary of the user's profile based on stored memories.
+
+        Returns:
+            Formatted string with user profile summary
+        """
+        try:
+            # Search for different categories of user information
+            profile_queries = [
+                "family members spouse children kids",
+                "preferences likes dislikes favorite",
+                "budget constraints limitations requirements",
+                "dietary restrictions allergies food preferences",
+                "travel experiences places visited hotels restaurants",
+                "location home address where lives",
+                "work job career occupation",
+                "future plans goals upcoming trips events"
+            ]
+
+            all_memories = []
+            for query in profile_queries:
+                memories = self.memory_agent.search_memories(query, top_k=5, min_similarity=0.6)
+                all_memories.extend(memories)
+
+            # Remove duplicates based on memory ID
+            unique_memories = {}
+            for memory in all_memories:
+                memory_id = memory.get('id', memory.get('memory_id'))
+                if memory_id not in unique_memories:
+                    unique_memories[memory_id] = memory
+
+            if not unique_memories:
+                return "No user profile information has been stored yet. Start a conversation to build the user profile!"
+
+            # Format the profile summary
+            profile_summary = "🧠 USER PROFILE SUMMARY\n"
+            profile_summary += "=" * 50 + "\n\n"
+
+            # Group memories by category
+            categories = {
+                "Family & Relationships": [],
+                "Preferences & Tastes": [],
+                "Constraints & Requirements": [],
+                "Experiences & History": [],
+                "Future Plans & Goals": [],
+                "Personal Context": []
+            }
+
+            for memory in unique_memories.values():
+                text = memory.get('text', memory.get('final_text', ''))
+                score = memory.get('score', 0) * 100
+                time = memory.get('formatted_time', 'Unknown time')
+
+                # Simple categorization based on keywords
+                text_lower = text.lower()
+                if any(word in text_lower for word in ['family', 'wife', 'husband', 'child', 'kid', 'son', 'daughter', 'parent']):
+                    categories["Family & Relationships"].append(f"• {text} ({score:.1f}% relevance, {time})")
+                elif any(word in text_lower for word in ['prefer', 'like', 'love', 'hate', 'favorite', 'enjoy']):
+                    categories["Preferences & Tastes"].append(f"• {text} ({score:.1f}% relevance, {time})")
+                elif any(word in text_lower for word in ['budget', 'limit', 'constraint', 'need', 'require', 'allergy', 'dietary']):
+                    categories["Constraints & Requirements"].append(f"• {text} ({score:.1f}% relevance, {time})")
+                elif any(word in text_lower for word in ['visited', 'been to', 'tried', 'experienced', 'stayed at']):
+                    categories["Experiences & History"].append(f"• {text} ({score:.1f}% relevance, {time})")
+                elif any(word in text_lower for word in ['planning', 'going to', 'will', 'next', 'upcoming', 'goal']):
+                    categories["Future Plans & Goals"].append(f"• {text} ({score:.1f}% relevance, {time})")
+                else:
+                    categories["Personal Context"].append(f"• {text} ({score:.1f}% relevance, {time})")
+
+            # Add non-empty categories to summary
+            for category, items in categories.items():
+                if items:
+                    profile_summary += f"{category}:\n"
+                    for item in items[:5]:  # Limit to top 5 per category
+                        profile_summary += f"  {item}\n"
+                    profile_summary += "\n"
+
+            profile_summary += f"Total memories: {len(unique_memories)}\n"
+            profile_summary += "=" * 50
+
+            return profile_summary
+
+        except Exception as e:
+            return f"Error generating user profile summary: {str(e)}"
+
+    def find_duplicate_memories(self, similarity_threshold: float = 0.9) -> Dict[str, Any]:
+        """Find potential duplicate memories in the system.
+
+        Args:
+            similarity_threshold: Similarity threshold for duplicate detection (default: 0.9)
+
+        Returns:
+            Dictionary with duplicate groups and statistics
+        """
+        try:
+            # Get all memories
+            all_memories = self.memory_agent.search_memories("", top_k=1000, min_similarity=0.0)
+
+            if len(all_memories) < 2:
+                return {
+                    "duplicate_groups": [],
+                    "total_memories": len(all_memories),
+                    "potential_duplicates": 0,
+                    "message": "Not enough memories to check for duplicates"
+                }
+
+            duplicate_groups = []
+            processed_ids = set()
+
+            for i, memory in enumerate(all_memories):
+                if memory.get('id') in processed_ids:
+                    continue
+
+                # Search for similar memories
+                similar_memories = self.memory_agent.search_memories(
+                    memory['text'],
+                    top_k=10,
+                    min_similarity=similarity_threshold
+                )
+
+                # Filter out the memory itself and find actual duplicates
+                duplicates = []
+                for similar in similar_memories:
+                    if (similar.get('id') != memory.get('id') and
+                        similar.get('id') not in processed_ids and
+                        similar['score'] >= similarity_threshold):
+                        duplicates.append(similar)
+                        processed_ids.add(similar.get('id'))
+
+                if duplicates:
+                    group = {
+                        "original": memory,
+                        "duplicates": duplicates,
+                        "group_size": len(duplicates) + 1
+                    }
+                    duplicate_groups.append(group)
+                    processed_ids.add(memory.get('id'))
+
+            total_duplicates = sum(group["group_size"] - 1 for group in duplicate_groups)
+
+            return {
+                "duplicate_groups": duplicate_groups,
+                "total_memories": len(all_memories),
+                "potential_duplicates": total_duplicates,
+                "duplicate_groups_count": len(duplicate_groups),
+                "message": f"Found {len(duplicate_groups)} groups with {total_duplicates} potential duplicates"
+            }
+
+        except Exception as e:
+            return {
+                "error": f"Error finding duplicates: {str(e)}",
+                "duplicate_groups": [],
+                "total_memories": 0,
+                "potential_duplicates": 0
+            }
 
     def answer_question(self, question: str, top_k: int = 5, filterBy: str = None) -> Dict[str, Any]:
         """Answer a question using the LangGraph workflow with proper confidence analysis.

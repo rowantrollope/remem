@@ -116,7 +116,7 @@ def chat_demo():
 # - Context management for grounding operations
 # =============================================================================
 
-@app.route('/api/nemes', methods=['POST'])
+@app.route('/api/memory', methods=['POST'])
 def api_store_neme():
     """Store a new atomic memory (Neme).
 
@@ -185,7 +185,7 @@ def api_store_neme():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes/search', methods=['POST'])
+@app.route('/api/memory/search', methods=['POST'])
 def api_search_nemes():
     """Search atomic memories (Nemes) using vector similarity.
 
@@ -196,9 +196,11 @@ def api_search_nemes():
         query (str): Search query text
         top_k (int, optional): Number of results to return (default: 5)
         filter (str, optional): Filter expression for Redis VSIM command
+        optimize_query (bool, optional): Whether to optimize query for embedding search (default: false)
+        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
     Returns:
-        JSON with success status, memories array, and count
+        JSON with success status, memories array, count, and memory breakdown by type
     """
     try:
         data = request.get_json()
@@ -209,28 +211,47 @@ def api_search_nemes():
         query = data.get('query', '').strip()
         top_k = data.get('top_k', 5)
         filter_expr = data.get('filter')
+        optimize_query = data.get('optimize_query', False)  # Optional query optimization
+        min_similarity = data.get('min_similarity', 0.7)  # Default to 0.7
 
         if not query:
             return jsonify({'error': 'Query is required'}), 400
 
-        print(f"🔍 NEME API: Searching atomic memories: {query} (top_k: {top_k})")
+        print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
+        if optimize_query:
+            print(f"🔍 Query optimization: enabled")
 
-        # Use the underlying memory agent for search operations
-        memories = memory_agent.memory_agent.search_memories(query, top_k, filter_expr)
+        # Use the underlying memory agent for search operations with optional optimization
+        if optimize_query:
+            validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
+            if validation_result["type"] == "search":
+                search_query = validation_result.get("embedding_query") or validation_result["content"]
+                print(f"🔍 Using optimized search query: '{search_query}'")
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(search_query, top_k, filter_expr, min_similarity)
+            else:
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+        else:
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+
+        memories = search_result['memories']
+        filtering_info = search_result['filtering_info']
+        print(f"🔍 NEME API: Search result type: {type(search_result)}")
+        print(f"🔍 NEME API: Filtering info: {filtering_info}")
 
         return jsonify({
             'success': True,
             'query': query,
             'memories': memories,
-            'count': len(memories)
+            'count': len(memories),
+            'filtering_info': filtering_info
         })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes', methods=['GET'])
+@app.route('/api/memory', methods=['GET'])
 def api_get_neme_info():
     """Get atomic memory (Neme) statistics and system information.
 
@@ -255,7 +276,7 @@ def api_get_neme_info():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes/<memory_id>', methods=['DELETE'])
+@app.route('/api/memory/<memory_id>', methods=['DELETE'])
 def api_delete_neme(memory_id):
     """Delete a specific atomic memory (Neme) by ID.
 
@@ -290,7 +311,7 @@ def api_delete_neme(memory_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes', methods=['DELETE'])
+@app.route('/api/memory', methods=['DELETE'])
 def api_delete_all_nemes():
     """Clear all atomic memories (Nemes) from the system.
 
@@ -321,7 +342,7 @@ def api_delete_all_nemes():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes/context', methods=['POST'])
+@app.route('/api/memory/context', methods=['POST'])
 def api_set_neme_context():
     """Set current context for memory grounding.
 
@@ -375,7 +396,7 @@ def api_set_neme_context():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/nemes/context', methods=['GET'])
+@app.route('/api/memory/context', methods=['GET'])
 def api_get_neme_context():
     """Get current context information for memory grounding.
 
@@ -424,10 +445,11 @@ def api_kline_recall():
         query (str): Query to construct mental state around
         top_k (int, optional): Number of memories to include (default: 5)
         filter (str, optional): Filter expression for Redis VSIM command
-        use_llm_filtering (bool, optional): Apply LLM-based relevance filtering (default: false)
+        use_llm_filtering (bool, optional): Apply LLM-based relevance filtering (default: true)
+        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
     Returns:
-        JSON with formatted mental state and supporting memories
+        JSON with formatted mental state, supporting memories, and memory breakdown by type
     """
     try:
         data = request.get_json()
@@ -439,6 +461,7 @@ def api_kline_recall():
         top_k = data.get('top_k', 5)
         filter_expr = data.get('filter')
         use_llm_filtering = data.get('use_llm_filtering', False)
+        min_similarity = data.get('min_similarity', 0.7)
 
         if not query:
             return jsonify({'error': 'Query is required'}), 400
@@ -449,10 +472,22 @@ def api_kline_recall():
         if use_llm_filtering:
             print(f"🤖 LLM filtering: enabled")
 
-        # Search for relevant memories
-        memories = memory_agent.memory_agent.search_memories(query, top_k, filter_expr)
+        # Search for relevant memories with embedding optimization
+        validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
 
-        # Apply LLM filtering if requested
+        if validation_result["type"] == "search":
+            # Use the embedding-optimized query for vector search
+            search_query = validation_result.get("embedding_query") or validation_result["content"]
+            print(f"🔍 Using optimized search query: '{search_query}'")
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(search_query, top_k, filter_expr, min_similarity)
+        else:
+            # For help queries, still search but with original query
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+
+        memories = search_result['memories']
+        filtering_info = search_result['filtering_info']
+
+        # Apply LLM filtering if requested (use original query for relevance filtering)
         if use_llm_filtering and memories:
             print(f"🤖 K-LINE API: Applying LLM filtering to {len(memories)} memories")
             filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(query, memories)
@@ -464,15 +499,23 @@ def api_kline_recall():
 
             memories = filtered_memories
 
-        # Format the mental state
-        formatted_state = memory_agent.memory_agent.processing.format_memory_results(memories)
+        # Construct K-line (mental state) from memories
+        if memories:
+            kline_result = memory_agent.memory_agent.construct_kline(query, memories)
+            mental_state = kline_result.get('mental_state', 'No mental state could be constructed.')
+            coherence_score = kline_result.get('coherence_score', 0.0)
+        else:
+            mental_state = 'No relevant memories found to construct mental state.'
+            coherence_score = 0.0
 
         response_data = {
             'success': True,
             'query': query,
-            'mental_state': formatted_state,
+            'mental_state': mental_state,
+            'coherence_score': coherence_score,
             'memories': memories,
-            'memory_count': len(memories)
+            'memory_count': len(memories),
+            'filtering_info': filtering_info
         }
 
         # Add filtering information if LLM filtering was used
@@ -495,13 +538,17 @@ def api_kline_answer():
     sophisticated reasoning to answer questions with confidence scoring.
     It represents the full cognitive process of memory recall + reasoning.
 
+    K-lines are constructed but NOT stored - they exist only as temporary mental states.
+
     Body:
         question (str): Question to answer
         top_k (int, optional): Number of memories to retrieve for context (default: 5)
         filter (str, optional): Filter expression for Redis VSIM command
+        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
     Returns:
-        JSON with structured response including answer, confidence, reasoning, and supporting memories
+        JSON with structured response including answer, confidence, reasoning, supporting memories,
+        and the constructed mental state (K-line)
     """
     try:
         data = request.get_json()
@@ -512,6 +559,7 @@ def api_kline_answer():
         question = data.get('question', '').strip()
         top_k = data.get('top_k', 5)
         filter_expr = data.get('filter')
+        min_similarity = data.get('min_similarity', 0.7)
 
         if not question:
             return jsonify({'error': 'Question is required'}), 400
@@ -522,13 +570,35 @@ def api_kline_answer():
 
         # Use the memory agent's sophisticated answer_question method
         # This constructs a K-line (mental state) and applies reasoning
-        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr)
+        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr, min_similarity=min_similarity)
 
-        return jsonify({
+        # Construct K-line (mental state) from the supporting memories
+        supporting_memories = answer_response.get('supporting_memories', [])
+        if supporting_memories:
+            kline_result = memory_agent.memory_agent.construct_kline(
+                query=question,
+                memories=supporting_memories,
+                answer=answer_response.get('answer'),
+                confidence=answer_response.get('confidence'),
+                reasoning=answer_response.get('reasoning')
+            )
+            print(f"🧠 Constructed K-line with coherence score: {kline_result.get('coherence_score', 0):.3f}")
+        else:
+            kline_result = {
+                'mental_state': 'No relevant memories found to construct mental state.',
+                'coherence_score': 0.0,
+                'summary': 'Empty mental state'
+            }
+
+        # Prepare the response
+        response_data = {
             'success': True,
             'question': question,
-            **answer_response  # Spread the structured response (answer, confidence, supporting_memories, etc.)
-        })
+            **answer_response,  # Spread the structured response (answer, confidence, supporting_memories, etc.)
+            'kline': kline_result  # Include the constructed mental state
+        }
+
+        return jsonify(response_data)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -573,12 +643,26 @@ def api_kline_extract():
         print(f"🔍 K-LINE API: Extracting memories from {len(raw_input)} characters of input")
         print(f"📋 Context: {context_prompt[:100]}...")
 
-        # Call the extract_and_store_memories method
+        # STEP 1: Search for existing relevant memories first (context-aware approach)
+        print(f"🔍 K-LINE API: Searching for existing relevant memories...")
+        existing_memories = memory_agent.memory_agent.search_memories(
+            raw_input,
+            top_k=10,
+            min_similarity=0.7
+        )
+
+        if existing_memories:
+            print(f"📚 K-LINE API: Found {len(existing_memories)} existing relevant memories")
+        else:
+            print(f"📚 K-LINE API: No existing relevant memories found")
+
+        # STEP 2: Call the extract_and_store_memories method with context
         result = memory_agent.memory_agent.extract_and_store_memories(
             raw_input=raw_input,
             context_prompt=context_prompt,
             extraction_examples=extraction_examples,
-            apply_grounding=apply_grounding
+            apply_grounding=apply_grounding,
+            existing_memories=existing_memories  # Pass existing memories for context-aware extraction
         )
 
         return jsonify({
@@ -588,6 +672,8 @@ def api_kline_extract():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
 
 # =============================================================================
 # AGENT API - High-Level Orchestration (Full Cognitive Architecture)
@@ -616,6 +702,7 @@ def api_agent_chat():
 
     Body:
         message (str): User message/question
+        system_prompt (str, optional): Custom system prompt to override default behavior
 
     Returns:
         JSON with success status, original message, and agent response
@@ -627,19 +714,23 @@ def api_agent_chat():
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
         message = data.get('message', '').strip()
+        system_prompt = data.get('system_prompt', '').strip()
 
         if not message:
             return jsonify({'error': 'Message is required'}), 400
 
         print(f"💬 AGENT API: Processing chat message - '{message}'")
+        if system_prompt:
+            print(f"🎯 AGENT API: Using custom system prompt - '{system_prompt[:60]}{'...' if len(system_prompt) > 60 else ''}'")
 
-        # Use the LangGraph agent's run method for full workflow orchestration
-        response = memory_agent.run(message)
+        # Use the LangGraph agent's run method with optional custom system prompt
+        response = memory_agent.run(message, system_prompt=system_prompt if system_prompt else None)
 
         return jsonify({
             'success': True,
             'message': message,
-            'response': response
+            'response': response,
+            'system_prompt_used': bool(system_prompt)
         })
 
     except Exception as e:
@@ -737,6 +828,8 @@ def api_agent_session_message(session_id):
         message (str): The user's message
         stream (bool, optional): Whether to stream the response (default: False)
         store_memory (bool, optional): Whether to extract and store memories from this conversation (default: True for memory-enabled sessions)
+        top_k (int, optional): Number of memories to search and return (default: 10)
+        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
     Returns:
         JSON with the assistant's response and conversation context.
@@ -754,6 +847,16 @@ def api_agent_session_message(session_id):
 
         stream = data.get('stream', False)
         store_memory = data.get('store_memory', True)  # Default to True for backward compatibility
+        top_k = data.get('top_k', 10)  # Default to 10 memories
+        min_similarity = data.get('min_similarity', 0.7)  # Default to 0.7
+
+        # Validate top_k parameter
+        if not isinstance(top_k, int) or top_k < 1:
+            return jsonify({'error': 'top_k must be a positive integer'}), 400
+
+        # Validate min_similarity parameter
+        if not isinstance(min_similarity, (int, float)) or min_similarity < 0.0 or min_similarity > 1.0:
+            return jsonify({'error': 'min_similarity must be a number between 0.0 and 1.0'}), 400
 
         session = app.chat_sessions[session_id]
         use_memory = session.get('use_memory', False)
@@ -773,7 +876,7 @@ def api_agent_session_message(session_id):
 
         # Handle memory-enabled sessions
         if use_memory:
-            return _handle_memory_enabled_message(session_id, session, message, stream, store_memory)
+            return _handle_memory_enabled_message(session_id, session, message, stream, store_memory, top_k, min_similarity)
         else:
             return _handle_standard_message(session_id, session, stream)
 
@@ -831,7 +934,7 @@ def _handle_standard_message(session_id, session, stream):
     })
 
 
-def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True):
+def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True, top_k=10, min_similarity=0.9):
     """Handle message processing for sessions with memory enabled."""
     if not memory_agent:
         return jsonify({'error': 'Memory agent not initialized but session requires memory'}), 500
@@ -846,18 +949,47 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
         'timestamp': datetime.now().isoformat()
     })
 
-    # Retrieve relevant memories for context
+    # Retrieve relevant memories for context using advanced filtering with embedding optimization
     relevant_memories = []
     try:
-        print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}'")
-        memory_results = memory_agent.memory_agent.search_memories(
-            query=user_message,
-            top_k=10
-        )
+        print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}' (top_k: {top_k})")
+
+        # Use embedding optimization for better vector similarity search
+        validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(user_message)
+
+        if validation_result["type"] == "search":
+            # Use the embedding-optimized query for vector search
+            search_query = validation_result.get("embedding_query") or validation_result["content"]
+            print(f"2b) Using optimized search query: '{search_query}'")
+
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query=search_query,
+                top_k=top_k,
+                min_similarity=min_similarity
+            )
+            memory_results = search_result['memories']
+            filtering_info = search_result['filtering_info']
+        else:
+            # For help queries, still search but with original message
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query=user_message,
+                top_k=top_k,
+                min_similarity=min_similarity
+            )
+            memory_results = search_result['memories']
+            filtering_info = search_result['filtering_info']
 
         if memory_results:
-            relevant_memories = memory_results
-            print(f"3) Found {len(relevant_memories)} relevant memories")
+            print(f"3) Found {len(memory_results)} memories, applying LLM filtering...")
+            # Apply LLM filtering for better relevance using original user message (not optimized query)
+            filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(user_message, memory_results)
+
+            # Track filtering statistics
+            original_count = len(memory_results)
+            filtered_count = len(filtered_memories)
+            print(f"3) LLM filtering kept {filtered_count}/{original_count} memories")
+
+            relevant_memories = filtered_memories
         else:
             print(f"3) No relevant memories found")
     except Exception as e:
@@ -866,9 +998,11 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     # Prepare enhanced system prompt with memory context
     enhanced_system_prompt = session['system_prompt']
     if relevant_memories:
-        memory_context = "\n\Possibly relevant information from previous interactions:\n"
+        memory_context = "\n\\Possibly relevant information from previous interactions:\n"
         for i, memory in enumerate(relevant_memories, 1):
+            # All memories are now nemes (atomic memories)
             memory_context += f"{i}. {memory['text']}\n"
+
         memory_context += "\nEvaluate whether the memory is relevant to this prompt or not (discard if not relevant) if relevant, use this information to provide more personalized and contextual responses."
         enhanced_system_prompt += memory_context
 
@@ -931,9 +1065,10 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     if relevant_memories:
         response_data['memory_context'] = {
             'memories_used': len(relevant_memories),
-            'memories': relevant_memories[:3]  # Include full memory details for rendering
+            'memories': relevant_memories,  # Include all memory details for rendering
+            'filtering_info': filtering_info if 'filtering_info' in locals() else None
         }
-
+    print(f"7) memories_used: {len(relevant_memories)}")
     return jsonify(response_data)
 
 
@@ -962,11 +1097,25 @@ def _check_and_extract_memories(session_id, session):
         # We only want to extract user preferences, facts, and constraints, not LLM suggestions
         conversation_text = f"User: {latest_user_message['content']}\n"
 
-        # Extract memories using the memory agent
+        # STEP 1: Search for existing relevant memories first (context-aware approach)
+        print(f"1) Searching for existing memories related to: '{latest_user_message['content'][:50]}...'")
+        existing_memories = memory_agent.memory_agent.search_memories(
+            latest_user_message['content'],
+            top_k=10,
+            min_similarity=0.7
+        )
+
+        if existing_memories:
+            print(f"2) Found {len(existing_memories)} existing relevant memories")
+        else:
+            print(f"2) No existing relevant memories found")
+
+        # STEP 2: Extract memories using context-aware approach
         result = memory_agent.memory_agent.extract_and_store_memories(
             raw_input=conversation_text,
             context_prompt=session.get('memory_context', 'Extract ONLY user preferences, constraints, facts, and important personal details from the user messages. Do NOT extract assistant suggestions or recommendations.'),
-            apply_grounding=True
+            apply_grounding=True,
+            existing_memories=existing_memories  # Pass existing memories for context-aware extraction
         )
 
         if result["total_extracted"] > 0:

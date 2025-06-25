@@ -148,7 +148,7 @@ def test_api_integration():
     print("=" * 50)
     
     # Test the K-lines recall endpoint
-    base_url = "http://localhost:5000"
+    base_url = "http://localhost:5001"
     
     try:
         # Test recall endpoint

@@ -30,7 +30,8 @@ class MemoryProcessing:
             user_input: Raw user input to validate
 
         Returns:
-            Dictionary with 'type' ('search' or 'help') and 'content' (optimized question or help message)
+            Dictionary with 'type' ('search' or 'help'), 'content' (optimized question or help message),
+            and 'embedding_query' (optimized query for vector similarity search)
         """
         validation_prompt = f"""You are a helpful memory assistant. The user has submitted: "{user_input}"
 
@@ -72,29 +73,105 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
 
             if validation_result.startswith("SEARCH:"):
                 optimized_question = validation_result[7:].strip()
+
+                # Generate embedding-optimized query for vector search
+                embedding_query = self.optimize_query_for_embedding_search(user_input, optimized_question)
+
                 return {
                     "type": "search",
-                    "content": optimized_question
+                    "content": optimized_question,
+                    "embedding_query": embedding_query
                 }
             elif validation_result.startswith("HELP:"):
                 help_message = validation_result[5:].strip()
                 return {
                     "type": "help",
-                    "content": help_message
+                    "content": help_message,
+                    "embedding_query": None
                 }
             else:
                 # Fallback: treat as search if format is unexpected
+                embedding_query = self.optimize_query_for_embedding_search(user_input, user_input)
                 return {
                     "type": "search",
-                    "content": user_input
+                    "content": user_input,
+                    "embedding_query": embedding_query
                 }
 
         except Exception as e:
             # Fallback: proceed with original input
+            try:
+                embedding_query = self.optimize_query_for_embedding_search(user_input, user_input)
+            except:
+                embedding_query = user_input
             return {
                 "type": "search",
-                "content": user_input
+                "content": user_input,
+                "embedding_query": embedding_query
             }
+
+    def optimize_query_for_embedding_search(self, original_input: str, processed_question: str) -> str:
+        """Optimize a query specifically for vector embedding similarity search.
+
+        This method extracts the semantic intent and creates a query optimized for finding
+        relevant memories via vector similarity, removing verbose content that dilutes embeddings.
+
+        Args:
+            original_input: The raw user input
+            processed_question: The already-processed question from validation
+
+        Returns:
+            Optimized query string for vector embedding search
+        """
+        optimization_prompt = f"""You are a memory search optimization expert. Your task is to create the optimal search query for finding relevant memories using vector similarity search.
+
+Original user input: "{original_input}"
+Processed question: "{processed_question}"
+
+The user has a personal memory system with embeddings created using text-embedding-ada-002. Your job is to create a search query that will have high vector similarity with the types of memories needed to help with this request.
+
+IMPORTANT GUIDELINES:
+1. Extract the core semantic intent and memory types needed
+2. Remove verbose content, code blocks, long examples that dilute the embedding
+3. Focus on the TYPE of information needed rather than specific details
+4. Use keywords that would likely appear in relevant stored memories
+5. Keep it concise but semantically rich
+
+EXAMPLES:
+- Input: "Review my code [500 lines of code]" → Output: "code review preferences programming style guidelines"
+- Input: "What did I learn about Redis yesterday?" → Output: "Redis learning database knowledge"
+- Input: "Tell me about my meeting with Sarah last week" → Output: "Sarah meeting discussion conversation"
+- Input: "What's my favorite restaurant in Paris?" → Output: "favorite restaurant Paris dining preferences"
+- Input: "Help me plan a trip to Italy" → Output: "Italy travel planning preferences destinations"
+- Input: "What color is my cat Molly?" → Output: "Molly cat color pet description"
+
+Your response should be ONLY the optimized search query (no explanations, no quotes, just the query):"""
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "user", "content": optimization_prompt}
+                ],
+                temperature=0.1,  # Low temperature for consistent optimization
+                max_tokens=50  # Keep it concise
+            )
+
+            optimized_query = response.choices[0].message.content.strip()
+
+            # Remove any quotes that might have been added
+            optimized_query = optimized_query.strip('"\'')
+
+            # Fallback to processed question if optimization result is too short or empty
+            if len(optimized_query.strip()) < 3:
+                return processed_question
+
+            print(f"🔍 EMBEDDING OPTIMIZATION: '{original_input[:50]}...' → '{optimized_query}'")
+            return optimized_query
+
+        except Exception as e:
+            print(f"⚠️ Embedding optimization failed: {e}, using processed question")
+            return processed_question
 
     def filter_relevant_memories(self, question: str, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Filter memories by relevance using LLM as judge.
@@ -119,7 +196,7 @@ Question: {question}
 Memory: {memory['text']}
 
 Instructions:
-1. Analyze if this memory contains ANY information that could help answer the question
+1. Analyze if this memory contains ANY information that could help answer the question or perform the task
 2. Consider both direct and indirect relevance
 3. Be strict - only consider it relevant if it actually relates to what's being asked OR may be used logically to deduce or infer the answer
 4. Respond with ONLY "RELEVANT" or "NOT_RELEVANT" followed by a brief reason
@@ -130,7 +207,12 @@ Examples:
 - Question: "When are my Kids' birthdays?" Memory: "My birthday is on October 7th" - NOT_RELEVANT (refers to the users birthday but not his/her kids)
 - Question: "When are my kids' birthdays?" Memory: "I went to an important and special birthday on July 1st" - RELEVANT (Birthday may have been related to kids?)
 - Question: "When are my kids' birthdays?" Memory: "I was with my daughter on July 1st" - RELEVANT (Celebration may have been the referenced birthday of the kids)
-- Question: "What did I eat yesterday?" Memory: "Had pizza for dinner on Tuesday" → RELEVANT (if today is Wednesday)
+- Question: "Help me plan a trip to paris" Memory: "Had french food for dinner on Tuesday" → NOT RELEVANT (Trip planning is unrelated to french food)
+- Question: "Help me plan a trip to paris" Memory: "I like to travel" → RELEVANT (General travel interest may be useful for trip planning)
+- Question: "Help me plan a trip to paris" Memory: "I have never been to Paris" → RELEVANT (Indicates first-time traveler, may need more help)
+- Question: "Help me plan a trip to paris" Memory: "I prefer to stay in 5-star hotels" → RELEVANT (Trip planning is related to hotel preferences)
+- Task: "Please review my code" Memory: "I like to travel" → NOT_RELEVANT (Traveling is unrelated to code review)
+- Task: "Review my code" Memory: "I like lots of comments" → RELEVANT (Code review is related to commenting style)
 
 Your response:"""
 
@@ -151,6 +233,7 @@ Your response:"""
                     memory["relevance_reasoning"] = relevance_result[8:].strip() if len(relevance_result) > 8 else "Deemed relevant"
                     relevant_memories.append(memory)
                 else:
+                    print(f"   ❌ EXCLUDED: {memory['text'][:60] - memory["relevance_reasoning"]}")
                     pass  # Memory filtered out silently
 
             except Exception as e:
@@ -162,28 +245,60 @@ Your response:"""
         return relevant_memories
 
     def format_memory_results(self, memories: List[Dict[str, Any]]) -> str:
-        """Format memory search results for display.
-        
+        """Format memory search results for display, handling both nemes and k-lines.
+
         Args:
-            memories: List of memory dictionaries
-            
+            memories: List of memory dictionaries (can include both nemes and k-lines)
+
         Returns:
-            Formatted string of memories
+            Formatted string of memories with appropriate formatting for each type
         """
         if not memories:
             return "No relevant memories found."
-        
+
         result_lines = ["Here's what I remember that might be useful:"]
-        
+
         for i, memory in enumerate(memories, 1):
             # VectorSet VSIM returns similarity scores (higher = more similar)
             # Convert to percentage (scores are typically between 0 and 1)
             score_percent = memory["score"] * 100
-            result_lines.append(
-                f"{i}. {memory['text']} "
-                f"(from {memory['formatted_time']}, {score_percent:.1f}% similar)"
-            )
-            if memory["tags"]:
+
+            # Check if this is a k-line or regular neme
+            memory_type = memory.get("type", "neme")
+
+            if memory_type == "k-line":
+                # Format k-line with its reasoning structure
+                question = memory.get("original_question", "Unknown question")
+                answer = memory.get("answer", memory.get("text", "No answer available"))
+                confidence = memory.get("confidence", "unknown")
+
+                result_lines.append(
+                    f"{i}. [K-LINE] Q: {question}"
+                )
+                result_lines.append(
+                    f"   A: {answer} (confidence: {confidence})"
+                )
+                result_lines.append(
+                    f"   (from {memory['formatted_time']}, {score_percent:.1f}% similar)"
+                )
+
+                # Show reasoning if available
+                reasoning = memory.get("reasoning", "")
+                if reasoning and len(reasoning) > 0:
+                    # Truncate long reasoning for display
+                    reasoning_preview = reasoning[:100] + "..." if len(reasoning) > 100 else reasoning
+                    result_lines.append(f"   Reasoning: {reasoning_preview}")
+
+            else:
+                # Format regular neme
+                text = memory.get("text", memory.get("final_text", memory.get("raw_text", "No text available")))
+                result_lines.append(
+                    f"{i}. {text} "
+                    f"(from {memory['formatted_time']}, {score_percent:.1f}% similar)"
+                )
+
+            # Show tags for both types
+            if memory.get("tags"):
                 result_lines.append(f"   Tags: {', '.join(memory['tags'])}")
-        
+
         return "\n".join(result_lines)

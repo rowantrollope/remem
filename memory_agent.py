@@ -103,21 +103,43 @@ class MemoryAgent:
         """
         return self.core.store_memory(memory_text, apply_grounding)
 
-    def search_memories(self, query: str, top_k: int = 3, filterBy: str = None) -> List[Dict[str, Any]]:
-        """Search for relevant Nemes using vector similarity.
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> List[Dict[str, Any]]:
+        """Search for relevant memories using vector similarity.
 
-        This is the fundamental operation for finding related atomic memories
-        that can be activated together to form mental states (K-lines).
+        This operation finds Nemes (atomic memories) that can be activated together for cognitive tasks.
 
         Args:
-            query: Search query to find relevant Nemes
-            top_k: Number of Nemes to return
+            query: Search query to find relevant memories
+            top_k: Number of memories to return
             filterBy: Optional filter expression
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
-            List of matching Nemes with metadata and relevance scores
+            List of matching memories with metadata and relevance scores that meet the minimum similarity threshold
         """
-        return self.core.search_memories(query, top_k, filterBy)
+        result = self.core.search_memories(query, top_k, filterBy, min_similarity)
+        # For backward compatibility, return just the memories list
+        # The filtering info is available in the full result if needed
+        return result['memories'] if isinstance(result, dict) else result
+
+    def search_memories_with_filtering_info(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> Dict[str, Any]:
+        """Search for relevant memories and return full results including filtering information.
+
+        This method returns the complete search results including information about
+        which memories were included/excluded based on the similarity threshold.
+
+        Args:
+            query: Search query to find relevant memories
+            top_k: Number of memories to return
+            filterBy: Optional filter expression
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
+
+        Returns:
+            Dictionary containing:
+            - memories: List of matching memories
+            - filtering_info: Information about included/excluded memories
+        """
+        return self.core.search_memories(query, top_k, filterBy, min_similarity)
 
     def set_context(self, location: str = None, activity: str = None, people_present: List[str] = None, **kwargs):
         """Set current context for memory grounding.
@@ -172,7 +194,7 @@ class MemoryAgent:
     #
     # These operations represent higher-level cognition built on the Neme substrate.
     # =========================================================================
-    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None) -> Dict[str, Any]:
+    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.7) -> Dict[str, Any]:
         """Answer a question by constructing a K-line and applying reasoning.
 
         This method demonstrates the full K-line process:
@@ -185,15 +207,17 @@ class MemoryAgent:
             question: The question to answer
             top_k: Number of Nemes to activate for the mental state
             filterBy: Optional filter expression
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
             Structured answer with confidence, reasoning, and supporting Nemes
         """
-        return self.reasoning.answer_question(question, top_k, filterBy)
+        return self.reasoning.answer_question(question, top_k, filterBy, min_similarity)
 
     def extract_and_store_memories(self, raw_input: str, context_prompt: str,
                                  extraction_examples: Optional[List[Dict[str, str]]] = None,
-                                 apply_grounding: bool = True) -> Dict[str, Any]:
+                                 apply_grounding: bool = True,
+                                 existing_memories: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Extract new Nemes from conversational experience.
 
         This represents the process of converting raw experience into
@@ -205,13 +229,33 @@ class MemoryAgent:
             context_prompt: Application context for extraction guidance
             extraction_examples: Optional examples to guide extraction
             apply_grounding: Whether to apply grounding to extracted Nemes
+            existing_memories: Optional list of existing memories to avoid duplicates
 
         Returns:
             Dictionary with extraction results and newly stored Nemes
         """
-        return self.extraction.extract_and_store_memories(raw_input, context_prompt, extraction_examples, apply_grounding)
+        return self.extraction.extract_and_store_memories(raw_input, context_prompt, extraction_examples, apply_grounding, existing_memories)
 
-    def recall_memories(self, query: str, top_k: int = 3) -> str:
+    def construct_kline(self, query: str, memories: List[Dict[str, Any]], answer: str = None,
+                       confidence: str = None, reasoning: str = None) -> Dict[str, Any]:
+        """Construct a K-line (mental state) from relevant memories.
+
+        This delegates to the core memory system's K-line construction.
+        K-lines are NOT stored - they exist only as temporary mental states.
+
+        Args:
+            query: The original query/question
+            memories: List of relevant memories to combine
+            answer: Optional answer text (for question-answering scenarios)
+            confidence: Optional confidence level
+            reasoning: Optional reasoning text
+
+        Returns:
+            Dictionary containing the constructed mental state
+        """
+        return self.core.construct_kline(query, memories, answer, confidence, reasoning)
+
+    def recall_memories(self, query: str, top_k: int = 10, min_similarity: float = 0.7) -> str:
         """Construct and format a mental state (K-line) for display.
 
         This method demonstrates K-line construction by:
@@ -222,12 +266,18 @@ class MemoryAgent:
         Args:
             query: Query to construct mental state around
             top_k: Number of Nemes to activate
+            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
             Formatted string representation of the mental state
         """
-        memories = self.search_memories(query, top_k)
-        return self.processing.format_memory_results(memories)
+        memories = self.search_memories(query, top_k, min_similarity=min_similarity)
+
+        # Construct K-line (mental state) from memories
+        kline_result = self.construct_kline(query, memories)
+
+        # Return the formatted mental state
+        return kline_result.get('mental_state', 'No mental state could be constructed.')
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get memory statistics (alias for get_memory_info)."""
@@ -347,10 +397,23 @@ def main():
                             print(f"💭 K-line Reasoning: {answer_response['reasoning']}")
 
                         if answer_response.get('supporting_memories'):
-                            print(f"\n📚 Supporting Nemes ({len(answer_response['supporting_memories'])}):")
+                            print(f"\n📚 Supporting Memories ({len(answer_response['supporting_memories'])}):")
                             for i, memory in enumerate(answer_response['supporting_memories'], 1):
-                                print(f"   {i}. {memory['text']} ({memory['relevance_score']}% relevant, {memory['timestamp']})")
-                                if memory['tags']:
+                                memory_type = memory.get('type', 'neme')
+                                relevance_score = memory.get('relevance_score', memory.get('score', 0))
+
+                                if memory_type == 'k-line':
+                                    question = memory.get('original_question', 'Unknown question')
+                                    answer = memory.get('answer', 'No answer')
+                                    confidence = memory.get('confidence', 'unknown')
+                                    print(f"   {i}. [K-LINE] Q: {question}")
+                                    print(f"      A: {answer} (confidence: {confidence})")
+                                    print(f"      ({relevance_score}% relevant, {memory.get('formatted_time', memory.get('timestamp', 'unknown time'))})")
+                                else:
+                                    text = memory.get('text', memory.get('final_text', memory.get('raw_text', 'No text')))
+                                    print(f"   {i}. [NEME] {text} ({relevance_score}% relevant, {memory.get('formatted_time', memory.get('timestamp', 'unknown time'))})")
+
+                                if memory.get('tags'):
                                     print(f"      Tags: {', '.join(memory['tags'])}")
                 else:
                     print("❌ Please provide a question after 'ask'")

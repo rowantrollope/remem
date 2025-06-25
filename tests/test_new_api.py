@@ -76,7 +76,7 @@ def main():
 
     # Test atomic memory storage
     print("2. Testing Neme Storage (Atomic Memory)")
-    store_response = test_api_endpoint("POST", "/api/nemes", {
+    store_response = test_api_endpoint("POST", "/api/memory", {
         "text": "I went to Mario's Italian Restaurant and had amazing pasta carbonara",
         "apply_grounding": True
     })
@@ -91,25 +91,25 @@ def main():
 
     # Store another atomic memory for testing
     print("3. Testing Neme Storage (Second Atomic Memory)")
-    test_api_endpoint("POST", "/api/nemes", {
+    test_api_endpoint("POST", "/api/memory", {
         "text": "My cat Molly is 3 years old and loves tuna treats",
         "apply_grounding": True
     })
     
     # Test atomic memory search
     print("4. Testing Neme Search (Vector Similarity)")
-    test_api_endpoint("POST", "/api/nemes/search", {
+    test_api_endpoint("POST", "/api/memory/search", {
         "query": "Italian restaurant food",
         "top_k": 5
     })
 
     # Test memory info
     print("5. Testing Neme System Info")
-    test_api_endpoint("GET", "/api/nemes")
+    test_api_endpoint("GET", "/api/memory")
 
     # Test context management for grounding
     print("6. Testing Neme Context Setting")
-    test_api_endpoint("POST", "/api/nemes/context", {
+    test_api_endpoint("POST", "/api/memory/context", {
         "location": "Jakarta, Indonesia",
         "activity": "testing API",
         "people_present": ["Alice", "Bob"],
@@ -117,7 +117,7 @@ def main():
     })
 
     print("7. Testing Neme Context Retrieval")
-    test_api_endpoint("GET", "/api/nemes/context")
+    test_api_endpoint("GET", "/api/memory/context")
 
     # ===== K-LINE API TESTS =====
     print("\n🧠 K-LINE API - Mental State Construction & Reasoning")
@@ -188,21 +188,21 @@ def main():
     # Test memory deletion (if we have a memory ID)
     if memory_id:
         print("14. Testing Neme Deletion")
-        test_api_endpoint("DELETE", f"/api/nemes/{memory_id}")
+        test_api_endpoint("DELETE", f"/api/memory/{memory_id}")
 
     # Test clear all memories
     print("15. Testing Clear All Nemes")
-    test_api_endpoint("DELETE", "/api/nemes")
+    test_api_endpoint("DELETE", "/api/memory")
     
     print("🎉 Minsky Memory Agent API Testing Complete!")
     print("\n📊 Three-Layer Architecture Summary:")
     print("🧠 NEME API (Fundamental Memory Operations):")
-    print("   - POST /api/nemes (store atomic memory)")
-    print("   - POST /api/nemes/search (vector similarity)")
-    print("   - GET /api/nemes (system info)")
-    print("   - POST/GET /api/nemes/context (context management)")
-    print("   - DELETE /api/nemes/{id} (delete specific)")
-    print("   - DELETE /api/nemes (clear all)")
+    print("   - POST /api/memory (store atomic memory)")
+    print("   - POST /api/memory/search (vector similarity)")
+    print("   - GET /api/memory (system info)")
+    print("   - POST/GET /api/memory/context (context management)")
+    print("   - DELETE /api/memory/{id} (delete specific)")
+    print("   - DELETE /api/memory (clear all)")
     print("\n🧠 K-LINE API (Mental State Construction):")
     print("   - POST /api/klines/recall (construct mental state)")
     print("   - POST /api/klines/answer (reasoning & Q&A)")
@@ -223,13 +223,13 @@ def test_error_cases():
     # NEME API error cases
     print("NEME API Error Cases:")
     print("1. Testing Missing Text Parameter")
-    test_api_endpoint("POST", "/api/nemes", {}, expected_status=400)
+    test_api_endpoint("POST", "/api/memory", {}, expected_status=400)
 
     print("2. Testing Missing Query Parameter")
-    test_api_endpoint("POST", "/api/nemes/search", {}, expected_status=400)
+    test_api_endpoint("POST", "/api/memory/search", {}, expected_status=400)
 
     print("3. Testing Invalid Neme ID")
-    test_api_endpoint("DELETE", "/api/nemes/invalid-id", expected_status=404)
+    test_api_endpoint("DELETE", "/api/memory/invalid-id", expected_status=404)
 
     # K-LINE API error cases
     print("\nK-LINE API Error Cases:")

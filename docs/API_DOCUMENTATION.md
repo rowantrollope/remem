@@ -23,7 +23,7 @@ Full conversational agents that orchestrate both Nemes and K-lines for sophistic
 ## NEME API
 
 ### Store Atomic Memory
-**POST** `/api/nemes`
+**POST** `/api/memory`
 
 Store a fundamental memory unit with optional contextual grounding.
 
@@ -49,7 +49,7 @@ Store a fundamental memory unit with optional contextual grounding.
 ```
 
 ### Search Atomic Memories
-**POST** `/api/nemes/search`
+**POST** `/api/memory/search`
 
 Find relevant Nemes using vector similarity search.
 
@@ -80,23 +80,23 @@ Find relevant Nemes using vector similarity search.
 ```
 
 ### Get Memory Statistics
-**GET** `/api/nemes`
+**GET** `/api/memory`
 
 Retrieve system information and memory count.
 
 ### Delete Specific Memory
-**DELETE** `/api/nemes/{memory_id}`
+**DELETE** `/api/memory/{memory_id}`
 
 Remove a specific Neme by ID.
 
 ### Clear All Memories
-**DELETE** `/api/nemes`
+**DELETE** `/api/memory`
 
 Remove all stored Nemes from the system.
 
 ### Context Management
-**POST** `/api/nemes/context` - Set current context for grounding
-**GET** `/api/nemes/context` - Get current context information
+**POST** `/api/memory/context` - Set current context for grounding
+**GET** `/api/memory/context` - Get current context information
 
 ---
 
@@ -192,7 +192,8 @@ Complete cognitive architecture with memory integration.
 
 ```json
 {
-  "message": "Help me plan a dinner for my wife and me"
+  "message": "Help me plan a dinner for my wife and me",
+  "system_prompt": "You are a helpful travel assistant" // Optional custom system prompt
 }
 ```
 
@@ -216,6 +217,21 @@ Create persistent conversational session with memory capabilities.
 **POST** `/api/agent/session/{session_id}`
 
 Send messages to an agent session with full cognitive architecture.
+
+```json
+{
+  "message": "What restaurants do you recommend?",
+  "top_k": 10,
+  "store_memory": true,
+  "stream": false
+}
+```
+
+Parameters:
+- `message` (string, required): The user's message
+- `top_k` (integer, optional): Number of memories to search and return (default: 10)
+- `store_memory` (boolean, optional): Whether to extract and store memories (default: true)
+- `stream` (boolean, optional): Whether to stream the response (default: false)
 
 ### Session Management
 **GET** `/api/agent/session/{session_id}` - Get session info

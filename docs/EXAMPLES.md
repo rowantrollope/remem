@@ -10,7 +10,7 @@ First, we store atomic memories about the user:
 
 ```javascript
 // Store basic preferences as Nemes
-await fetch('/api/nemes', {
+await fetch('/api/memory', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -19,7 +19,7 @@ await fetch('/api/nemes', {
   })
 });
 
-await fetch('/api/nemes', {
+await fetch('/api/memory', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -28,7 +28,7 @@ await fetch('/api/nemes', {
   })
 });
 
-await fetch('/api/nemes', {
+await fetch('/api/memory', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -60,7 +60,33 @@ const filteredMemories = await fetch('/api/klines/recall', {
   body: JSON.stringify({
     query: "restaurant preferences for dinner",
     top_k: 10,
+    memory_type: "neme",  // Only search atomic memories (nemes)
     use_llm_filtering: true  // Apply intelligent relevance filtering
+  })
+});
+
+// Search for previous reasoning patterns (k-lines) about similar topics
+const previousReasoning = await fetch('/api/klines/recall', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: "restaurant recommendations",
+    top_k: 5,
+    memory_type: "k-line"  // Only search previous reasoning (k-lines)
+    // This uses Redis FILTER: @type == 'k-line' for efficient server-side filtering
+  })
+});
+
+// You can also combine memory_type with custom filters
+const complexSearch = await fetch('/api/memory/search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: "travel preferences",
+    top_k: 10,
+    memory_type: "neme",  // Only nemes
+    filter: "@tags == 'preferences'"  // Additional custom filter
+    // Combined Redis FILTER: (@tags == "preferences") && ((!exists(@type) || @type == 'neme'))
   })
 });
 
@@ -81,6 +107,44 @@ console.log(await seatRecommendation.json());
 //   "reasoning": "Based on your stored preferences, you prefer window seats on flights.",
 //   "supporting_memories": [...]
 // }
+
+// Handle mixed memory types in search results
+const allMemories = await fetch('/api/memory/search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: "travel preferences",
+    top_k: 10
+    // No memory_type specified - returns both nemes and k-lines
+  })
+});
+
+const result = await allMemories.json();
+console.log(`Found ${result.memory_breakdown.nemes} nemes and ${result.memory_breakdown.klines} k-lines`);
+
+// Process different memory types appropriately
+result.memories.forEach(memory => {
+  if (memory.type === 'k-line') {
+    console.log(`K-line: ${memory.original_question} → ${memory.answer}`);
+  } else {
+    console.log(`Neme: ${memory.text}`);
+  }
+});
+
+## Performance Benefits of Redis Filtering
+
+The memory type filtering is implemented using Redis VSIM FILTER commands for optimal performance:
+
+- **Server-side filtering**: Filtering happens at the Redis level in C code, not in Python
+- **Reduced network traffic**: Only matching results are returned over the network
+- **Scalable**: Performance remains consistent even with large memory collections
+- **Efficient indexing**: Leverages Redis's optimized metadata indexing
+- **Combined filters**: Multiple filter conditions are combined efficiently
+
+### Filter Examples:
+- `memory_type: "neme"` → `(!exists(@type) || @type == 'neme')`
+- `memory_type: "k-line"` → `@type == 'k-line'`
+- Combined: `(@tags == "travel") && (@type == 'k-line')`
 ```
 
 ### Step 3: Full Agent Conversation (AGENT API)
@@ -185,7 +249,7 @@ await chatWithAgent(agent, "Plan my business trip to Tokyo");
 
 ```javascript
 try {
-  const response = await fetch('/api/nemes', {
+  const response = await fetch('/api/memory', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

@@ -36,7 +36,7 @@ class ChatAPITester:
             raise Exception("No active session. Create a session first.")
 
         response = requests.post(
-            f"{self.base_url}/api/chat/session/{session}",
+            f"{self.base_url}/api/agent/session/{session}",
             json={"message": message}
         )
         
@@ -51,7 +51,7 @@ class ChatAPITester:
         if not session:
             raise Exception("No active session specified.")
 
-        response = requests.get(f"{self.base_url}/api/chat/session/{session}")
+        response = requests.get(f"{self.base_url}/api/agent/session/{session}")
         
         if response.status_code == 200:
             return response.json()
@@ -60,7 +60,7 @@ class ChatAPITester:
 
     def list_sessions(self):
         """List all active sessions."""
-        response = requests.get(f"{self.base_url}/api/chat/sessions")
+        response = requests.get(f"{self.base_url}/api/agent/sessions")
         
         if response.status_code == 200:
             return response.json()
@@ -73,7 +73,7 @@ class ChatAPITester:
         if not session:
             return
 
-        response = requests.delete(f"{self.base_url}/api/chat/session/{session}")
+        response = requests.delete(f"{self.base_url}/api/agent/session/{session}")
         
         if response.status_code == 200:
             if session == self.session_id:
