@@ -406,7 +406,7 @@ def api_get_neme_context():
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        current_context = memory_agent.memory_agent._get_current_context()
+        current_context = memory_agent.memory_agent.core._get_current_context()
 
         return jsonify({
             'success': True,
