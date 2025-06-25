@@ -72,13 +72,15 @@ def init_memory_agent():
         base_memory_agent = MemoryAgent(
             redis_host=app_config["redis"]["host"],
             redis_port=app_config["redis"]["port"],
-            redis_db=app_config["redis"]["db"]
+            redis_db=app_config["redis"]["db"],
+            vectorset_key=app_config["redis"]["vectorset_key"]
         )
 
         # Create LangGraph agent with current OpenAI configuration
         memory_agent = LangGraphMemoryAgent(
             model_name=app_config["langgraph"]["model_name"],
-            temperature=app_config["langgraph"]["temperature"]
+            temperature=app_config["langgraph"]["temperature"],
+            vectorset_key=app_config["redis"]["vectorset_key"]
         )
 
         # Replace the underlying memory agent with our configured one
@@ -88,16 +90,6 @@ def init_memory_agent():
     except Exception as e:
         print(f"Failed to initialize LangGraph memory agent: {e}")
         return False
-
-@app.route('/')
-def index():
-    """Main page."""
-    return render_template('index.html')
-
-@app.route('/chat-demo')
-def chat_demo():
-    """Chat API demo page."""
-    return render_template('chat_demo.html')
 
 # =============================================================================
 # NEME API - Fundamental Memory Operations (Inspired by Minsky's "Nemes")
@@ -126,6 +118,7 @@ def api_store_neme():
     Body:
         text (str): Memory text to store
         apply_grounding (bool, optional): Whether to apply contextual grounding (default: true)
+        vectorstore_name (str, optional): Name of the vectorstore to use (default: configured default)
 
     Returns:
         JSON with success status, memory_id, message, and grounding information:
@@ -144,19 +137,26 @@ def api_store_neme():
     try:
         data = request.get_json()
 
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
         memory_text = data.get('text', '').strip()
         apply_grounding = data.get('apply_grounding', True)
+        vectorstore_name = data.get('vectorstore_name')
 
         if not memory_text:
             return jsonify({'error': 'Memory text is required'}), 400
 
         print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
+        if vectorstore_name:
+            print(f"📦 Vectorstore: {vectorstore_name}")
 
-        # Use the underlying memory agent for storage operations
-        storage_result = memory_agent.memory_agent.store_memory(memory_text, apply_grounding=apply_grounding)
+        # Use existing memory agent with vectorstore parameter
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        storage_result = memory_agent.memory_agent.store_memory(
+            memory_text,
+            apply_grounding=apply_grounding,
+            vectorset_key=vectorstore_name
+        )
 
         # Prepare response with grounding information
         response_data = {
@@ -168,7 +168,8 @@ def api_store_neme():
             'grounding_applied': storage_result['grounding_applied'],
             'tags': storage_result['tags'],
             'timestamp': storage_result['timestamp'],
-            'formatted_time': storage_result['formatted_time']
+            'formatted_time': storage_result['formatted_time'],
+            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
         }
 
         # Include grounding information if available
@@ -197,6 +198,7 @@ def api_search_nemes():
         filter (str, optional): Filter expression for Redis VSIM command
         optimize_query (bool, optional): Whether to optimize query for embedding search (default: false)
         min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
+        vectorstore_name (str, optional): Name of the vectorstore to search (default: configured default)
 
     Returns:
         JSON with success status, memories array, count, and memory breakdown by type
@@ -204,35 +206,45 @@ def api_search_nemes():
     try:
         data = request.get_json()
 
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
         query = data.get('query', '').strip()
         top_k = data.get('top_k', 5)
         filter_expr = data.get('filter')
         optimize_query = data.get('optimize_query', False)  # Optional query optimization
         min_similarity = data.get('min_similarity', 0.7)  # Default to 0.7
+        vectorstore_name = data.get('vectorstore_name')
 
         if not query:
             return jsonify({'error': 'Query is required'}), 400
 
         print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
+        if vectorstore_name:
+            print(f"📦 Vectorstore: {vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
         if optimize_query:
             print(f"🔍 Query optimization: enabled")
 
-        # Use the underlying memory agent for search operations with optional optimization
+        # Use existing memory agent with vectorstore parameter
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        # Use the memory agent for search operations with optional optimization
         if optimize_query:
             validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
             if validation_result["type"] == "search":
                 search_query = validation_result.get("embedding_query") or validation_result["content"]
                 print(f"🔍 Using optimized search query: '{search_query}'")
-                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(search_query, top_k, filter_expr, min_similarity)
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                    search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+                )
             else:
-                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                    query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+                )
         else:
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+            )
 
         memories = search_result['memories']
         filtering_info = search_result['filtering_info']
@@ -244,7 +256,8 @@ def api_search_nemes():
             'query': query,
             'memories': memories,
             'count': len(memories),
-            'filtering_info': filtering_info
+            'filtering_info': filtering_info,
+            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
         })
 
     except Exception as e:
@@ -282,24 +295,39 @@ def api_delete_neme(memory_id):
     Path Parameters:
         memory_id (str): UUID of the memory to delete
 
+    Body (optional):
+        vectorstore_name (str, optional): Name of the vectorstore to delete from (default: configured default)
+
     Returns:
         JSON with success status and deletion details
     """
     try:
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
         if not memory_id or not memory_id.strip():
             return jsonify({'error': 'Memory ID is required'}), 400
 
+        # Get vectorstore_name from request body if provided
+        data = request.get_json() or {}
+        vectorstore_name = data.get('vectorstore_name')
+
         print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
-        success = memory_agent.memory_agent.delete_memory(memory_id.strip())
+        if vectorstore_name:
+            print(f"📦 Vectorstore: {vectorstore_name}")
+
+        # Use existing memory agent with vectorstore parameter
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
+
+        success = memory_agent.memory_agent.delete_memory(
+            memory_id.strip(),
+            vectorset_key=vectorstore_name
+        )
 
         if success:
             return jsonify({
                 'success': True,
                 'message': f'Neme {memory_id} deleted successfully',
-                'memory_id': memory_id
+                'memory_id': memory_id,
+                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
             })
         else:
             return jsonify({
@@ -314,28 +342,41 @@ def api_delete_neme(memory_id):
 def api_delete_all_nemes():
     """Clear all atomic memories (Nemes) from the system.
 
+    Body (optional):
+        vectorstore_name (str, optional): Name of the vectorstore to clear (default: configured default)
+
     Returns:
         JSON with success status, deletion count, and operation details
     """
     try:
+        # Get vectorstore_name from request body if provided
+        data = request.get_json() or {}
+        vectorstore_name = data.get('vectorstore_name')
+
+        print("🗑️ NEME API: Clearing all atomic memories...")
+        if vectorstore_name:
+            print(f"📦 Vectorstore: {vectorstore_name}")
+
+        # Use existing memory agent with vectorstore parameter
         if not memory_agent:
             return jsonify({'error': 'Memory agent not initialized'}), 500
 
-        print("🗑️ NEME API: Clearing all atomic memories...")
-        result = memory_agent.memory_agent.clear_all_memories()
+        result = memory_agent.memory_agent.clear_all_memories(vectorset_key=vectorstore_name)
 
         if result['success']:
             return jsonify({
                 'success': True,
                 'message': result['message'],
                 'memories_deleted': result['memories_deleted'],
-                'vectorset_existed': result['vectorset_existed']
+                'vectorset_existed': result['vectorset_existed'],
+                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
             })
         else:
             return jsonify({
                 'success': False,
                 'error': result['error'],
-                'memories_deleted': result.get('memories_deleted', 0)
+                'memories_deleted': result.get('memories_deleted', 0),
+                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
             }), 500
 
     except Exception as e:
@@ -446,6 +487,7 @@ def api_kline_recall():
         filter (str, optional): Filter expression for Redis VSIM command
         use_llm_filtering (bool, optional): Apply LLM-based relevance filtering (default: true)
         min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
+        vectorstore_name (str, optional): Name of the vectorstore to search (default: configured default)
 
     Returns:
         JSON with formatted mental state, supporting memories, and memory breakdown by type
@@ -453,23 +495,27 @@ def api_kline_recall():
     try:
         data = request.get_json()
 
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
         query = data.get('query', '').strip()
         top_k = data.get('top_k', 5)
         filter_expr = data.get('filter')
         use_llm_filtering = data.get('use_llm_filtering', False)
         min_similarity = data.get('min_similarity', 0.7)
+        vectorstore_name = data.get('vectorstore_name')
 
         if not query:
             return jsonify({'error': 'Query is required'}), 400
 
         print(f"🧠 K-LINE API: Constructing mental state for: {query} (top_k: {top_k})")
+        if vectorstore_name:
+            print(f"📦 Vectorstore: {vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
         if use_llm_filtering:
             print(f"🤖 LLM filtering: enabled")
+
+        # Use existing memory agent with vectorstore parameter
+        if not memory_agent:
+            return jsonify({'error': 'Memory agent not initialized'}), 500
 
         # Search for relevant memories with embedding optimization
         validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
@@ -478,10 +524,14 @@ def api_kline_recall():
             # Use the embedding-optimized query for vector search
             search_query = validation_result.get("embedding_query") or validation_result["content"]
             print(f"🔍 Using optimized search query: '{search_query}'")
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(search_query, top_k, filter_expr, min_similarity)
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+            )
         else:
             # For help queries, still search but with original query
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(query, top_k, filter_expr, min_similarity)
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+            )
 
         memories = search_result['memories']
         filtering_info = search_result['filtering_info']
@@ -514,7 +564,8 @@ def api_kline_recall():
             'coherence_score': coherence_score,
             'memories': memories,
             'memory_count': len(memories),
-            'filtering_info': filtering_info
+            'filtering_info': filtering_info,
+            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
         }
 
         # Add filtering information if LLM filtering was used
@@ -598,76 +649,6 @@ def api_kline_answer():
         }
 
         return jsonify(response_data)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/klines/extract', methods=['POST'])
-def api_kline_extract():
-    """Extract and store memories from conversational data using K-line analysis.
-
-    This operation uses sophisticated LLM analysis to identify valuable
-    information in conversations and extract it as new Nemes. It represents
-    the process of converting raw experience into structured memory.
-
-    Body:
-        raw_input (str): The full conversational data to analyze
-        context_prompt (str): Application-specific context for extraction guidance
-        extraction_examples (list, optional): Examples to guide LLM extraction
-        apply_grounding (bool, optional): Whether to apply contextual grounding (default: True)
-
-    Returns:
-        JSON with extracted memories and extraction summary
-    """
-    try:
-        data = request.get_json()
-
-        if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
-
-        # Validate required fields
-        raw_input = data.get('raw_input', '').strip()
-        context_prompt = data.get('context_prompt', '').strip()
-
-        if not raw_input:
-            return jsonify({'error': 'raw_input is required'}), 400
-
-        if not context_prompt:
-            return jsonify({'error': 'context_prompt is required'}), 400
-
-        # Optional parameters with defaults
-        extraction_examples = data.get('extraction_examples', None)
-        apply_grounding = data.get('apply_grounding', True)
-
-        print(f"🔍 K-LINE API: Extracting memories from {len(raw_input)} characters of input")
-        print(f"📋 Context: {context_prompt[:100]}...")
-
-        # STEP 1: Search for existing relevant memories first (context-aware approach)
-        print(f"🔍 K-LINE API: Searching for existing relevant memories...")
-        existing_memories = memory_agent.memory_agent.search_memories(
-            raw_input,
-            top_k=10,
-            min_similarity=0.7
-        )
-
-        if existing_memories:
-            print(f"📚 K-LINE API: Found {len(existing_memories)} existing relevant memories")
-        else:
-            print(f"📚 K-LINE API: No existing relevant memories found")
-
-        # STEP 2: Call the extract_and_store_memories method with context
-        result = memory_agent.memory_agent.extract_and_store_memories(
-            raw_input=raw_input,
-            context_prompt=context_prompt,
-            extraction_examples=extraction_examples,
-            apply_grounding=apply_grounding,
-            existing_memories=existing_memories  # Pass existing memories for context-aware extraction
-        )
-
-        return jsonify({
-            'success': True,
-            **result
-        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -48,7 +48,8 @@ class MemoryAgent:
     3. AGENT API: Full cognitive orchestration
     """
 
-    def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None):
+    def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None,
+                 vectorset_key: str = None):
         """Initialize the memory agent with Minsky-inspired cognitive architecture.
 
         This creates a layered system where:
@@ -61,9 +62,10 @@ class MemoryAgent:
             redis_host: Redis server host (defaults to REDIS_HOST env var or "localhost")
             redis_port: Redis server port (defaults to REDIS_PORT env var or 6379)
             redis_db: Redis database number (defaults to REDIS_DB env var or 0)
+            vectorset_key: Name of the vectorset to use (defaults to "memories")
         """
         # Initialize the core layer (Neme management)
-        self.core = MemoryCore(redis_host, redis_port, redis_db)
+        self.core = MemoryCore(redis_host, redis_port, redis_db, vectorset_key)
 
         # Initialize processing utilities (cognitive tools)
         self.processing = MemoryProcessing()
@@ -87,7 +89,7 @@ class MemoryAgent:
     # These methods provide direct access to the memory substrate that
     # underlies all higher-level cognitive operations.
     # =========================================================================
-    def store_memory(self, memory_text: str, apply_grounding: bool = True) -> Dict[str, Any]:
+    def store_memory(self, memory_text: str, apply_grounding: bool = True, vectorset_key: str = None) -> Dict[str, Any]:
         """Store an atomic memory (Neme) with optional contextual grounding.
 
         In Minsky's framework, this creates a fundamental memory unit that
@@ -97,13 +99,14 @@ class MemoryAgent:
         Args:
             memory_text: The memory text to store as a Neme
             apply_grounding: Whether to apply contextual grounding
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary with storage results and grounding information
         """
-        return self.core.store_memory(memory_text, apply_grounding)
+        return self.core.store_memory(memory_text, apply_grounding, vectorset_key)
 
-    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> List[Dict[str, Any]]:
         """Search for relevant memories using vector similarity.
 
         This operation finds Nemes (atomic memories) that can be activated together for cognitive tasks.
@@ -113,16 +116,17 @@ class MemoryAgent:
             top_k: Number of memories to return
             filterBy: Optional filter expression
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             List of matching memories with metadata and relevance scores that meet the minimum similarity threshold
         """
-        result = self.core.search_memories(query, top_k, filterBy, min_similarity)
+        result = self.core.search_memories(query, top_k, filterBy, min_similarity, vectorset_key)
         # For backward compatibility, return just the memories list
         # The filtering info is available in the full result if needed
         return result['memories'] if isinstance(result, dict) else result
 
-    def search_memories_with_filtering_info(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> Dict[str, Any]:
+    def search_memories_with_filtering_info(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> Dict[str, Any]:
         """Search for relevant memories and return full results including filtering information.
 
         This method returns the complete search results including information about
@@ -133,13 +137,14 @@ class MemoryAgent:
             top_k: Number of memories to return
             filterBy: Optional filter expression
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary containing:
             - memories: List of matching memories
             - filtering_info: Information about included/excluded memories
         """
-        return self.core.search_memories(query, top_k, filterBy, min_similarity)
+        return self.core.search_memories(query, top_k, filterBy, min_similarity, vectorset_key)
 
     def set_context(self, location: str = None, activity: str = None, people_present: List[str] = None, **kwargs):
         """Set current context for memory grounding.
@@ -152,24 +157,28 @@ class MemoryAgent:
         """
         return self.core.set_context(location, activity, people_present, **kwargs)
 
-    def delete_memory(self, memory_id: str) -> bool:
+    def delete_memory(self, memory_id: str, vectorset_key: str = None) -> bool:
         """Delete a specific memory.
 
         Args:
             memory_id: UUID of memory to delete
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             True if deleted successfully
         """
-        return self.core.delete_memory(memory_id)
+        return self.core.delete_memory(memory_id, vectorset_key)
 
-    def clear_all_memories(self) -> Dict[str, Any]:
+    def clear_all_memories(self, vectorset_key: str = None) -> Dict[str, Any]:
         """Clear all stored memories.
+
+        Args:
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary with operation results
         """
-        return self.core.clear_all_memories()
+        return self.core.clear_all_memories(vectorset_key)
 
     def get_memory_info(self) -> Dict[str, Any]:
         """Get memory system statistics.

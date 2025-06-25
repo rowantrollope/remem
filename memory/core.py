@@ -85,13 +85,14 @@ class MemoryCore:
     """Low-level memory storage and retrieval with Redis VectorSet and OpenAI embeddings."""
     
     def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None,
-                 relevance_config: RelevanceConfig = None):
+                 vectorset_key: str = None, relevance_config: RelevanceConfig = None):
         """Initialize the memory core.
 
         Args:
             redis_host: Redis server host (defaults to REDIS_HOST env var or "localhost")
             redis_port: Redis server port (defaults to REDIS_PORT env var or 6379)
             redis_db: Redis database number (defaults to REDIS_DB env var or 0)
+            vectorset_key: Name of the vectorset to use (defaults to "memories")
             relevance_config: Configuration for relevance scoring (uses defaults if None)
         """
         # Get Redis connection details from environment variables with fallbacks
@@ -119,7 +120,7 @@ class MemoryCore:
             sys.exit(1)
 
         # Constants
-        self.VECTORSET_KEY = "memories"
+        self.VECTORSET_KEY = vectorset_key or "memories"
         self.EMBEDDING_DIM = 1536  # OpenAI text-embedding-ada-002 dimension
 
         # Relevance scoring configuration
@@ -196,15 +197,17 @@ class MemoryCore:
         # Ensure score doesn't exceed reasonable bounds (allow slight boost above 1.0)
         return min(total_score, 1.5)
 
-    def _update_memory_access(self, memory_id: str) -> None:
+    def _update_memory_access(self, memory_id: str, vectorset_key: str = None) -> None:
         """Update access tracking for a memory (increment count and update last accessed time).
 
         Args:
             memory_id: ID of the memory to update
+            vectorset_key: Optional vectorset key to use instead of the instance default
         """
         try:
             # Get current metadata
-            metadata_json = self.redis_client.execute_command("VGETATTR", self.VECTORSET_KEY, memory_id)
+            vectorset_to_use = vectorset_key or self.VECTORSET_KEY
+            metadata_json = self.redis_client.execute_command("VGETATTR", vectorset_to_use, memory_id)
             if not metadata_json:
                 return
 
@@ -218,7 +221,7 @@ class MemoryCore:
 
             # Update metadata in Redis
             updated_metadata_json = json.dumps(metadata)
-            self.redis_client.execute_command("VSETATTR", self.VECTORSET_KEY, memory_id, updated_metadata_json)
+            self.redis_client.execute_command("VSETATTR", vectorset_to_use, memory_id, updated_metadata_json)
 
         except Exception as e:
             # Don't fail the search if access tracking fails
@@ -516,12 +519,13 @@ Respond with a JSON object:
                 "error": str(e)
             }
 
-    def store_memory(self, memory_text: str, apply_grounding: bool = True) -> Dict[str, Any]:
+    def store_memory(self, memory_text: str, apply_grounding: bool = True, vectorset_key: str = None) -> Dict[str, Any]:
         """Store a memory using VectorSet with optional contextual grounding.
 
         Args:
             memory_text: The memory text to store
             apply_grounding: Whether to apply contextual grounding to resolve context-dependent references
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary containing:
@@ -597,7 +601,8 @@ Respond with a JSON object:
 
             # Add vector to VectorSet with metadata
             # Format: VADD vectorsetname VALUES LENGTH value1 value2 ... valueN element SETATTR "json string"
-            cmd = ["VADD", self.VECTORSET_KEY, "VALUES", str(self.EMBEDDING_DIM)] + embedding_values + [memory_id, "SETATTR", metadata_json]
+            vectorset_to_use = vectorset_key or self.VECTORSET_KEY
+            cmd = ["VADD", vectorset_to_use, "VALUES", str(self.EMBEDDING_DIM)] + embedding_values + [memory_id, "SETATTR", metadata_json]
             self.redis_client.execute_command(*cmd)
 
             # Return structured response with grounding information
@@ -629,7 +634,7 @@ Respond with a JSON object:
             print(f"❌ Memory storage error: {e}")
             raise
 
-    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> List[Dict[str, Any]]:
         """Search for relevant memories using VectorSet similarity.
 
         Args:
@@ -637,6 +642,7 @@ Respond with a JSON object:
             top_k: Number of top results to return
             filterBy: Optional filter expression for VSIM command
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             List of matching memories with metadata that meet the minimum similarity threshold
@@ -648,7 +654,8 @@ Respond with a JSON object:
         # Perform vector similarity search using VSIM
         try:
             # VSIM vectorsetname VALUES LENGTH value1 value2 ... valueN [WITHSCORES] [COUNT count] [FILTER expression]
-            cmd = ["VSIM", self.VECTORSET_KEY, "VALUES", str(self.EMBEDDING_DIM)] + query_vector_values + ["WITHSCORES", "COUNT", str(top_k)]
+            vectorset_to_use = vectorset_key or self.VECTORSET_KEY
+            cmd = ["VSIM", vectorset_to_use, "VALUES", str(self.EMBEDDING_DIM)] + query_vector_values + ["WITHSCORES", "COUNT", str(top_k)]
 
             # Add user-provided filter if specified
             if filterBy:
@@ -666,7 +673,7 @@ Respond with a JSON object:
 
                     # Get metadata for this element using VGETATTR
                     try:
-                        metadata_json = self.redis_client.execute_command("VGETATTR", self.VECTORSET_KEY, element_id)
+                        metadata_json = self.redis_client.execute_command("VGETATTR", vectorset_to_use, element_id)
                         if metadata_json:
                             metadata_str = metadata_json.decode('utf-8') if isinstance(metadata_json, bytes) else metadata_json
                             metadata = json.loads(metadata_str)
@@ -722,7 +729,7 @@ Respond with a JSON object:
 
             # Update access tracking for all retrieved memories
             for memory in memories:
-                self._update_memory_access(memory["id"])
+                self._update_memory_access(memory["id"], vectorset_to_use)
 
             # Filter by minimum similarity score threshold and track included/excluded
             included_memories = []
@@ -779,18 +786,20 @@ Respond with a JSON object:
                 }
             }
 
-    def delete_memory(self, memory_id: str) -> bool:
+    def delete_memory(self, memory_id: str, vectorset_key: str = None) -> bool:
         """Delete a specific memory from the VectorSet.
 
         Args:
             memory_id: The UUID of the memory to delete
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             True if memory was deleted successfully, False otherwise
         """
         try:
             # Use VREM to remove the memory from the VectorSet
-            result = self.redis_client.execute_command("VREM", self.VECTORSET_KEY, memory_id)
+            vectorset_to_use = vectorset_key or self.VECTORSET_KEY
+            result = self.redis_client.execute_command("VREM", vectorset_to_use, memory_id)
 
             if result == 1:
                 print(f"✅ Deleted memory with ID: {memory_id}")
@@ -803,18 +812,22 @@ Respond with a JSON object:
             print(f"❌ Error deleting memory {memory_id}: {e}")
             return False
 
-    def clear_all_memories(self) -> Dict[str, Any]:
+    def clear_all_memories(self, vectorset_key: str = None) -> Dict[str, Any]:
         """Clear all memories from the VectorSet.
+
+        Args:
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary with success status and details about the operation
         """
         try:
             print("🗑️ Clearing all memories...")
+            vectorset_to_use = vectorset_key or self.VECTORSET_KEY
 
             # First, check if vectorset exists and get current count
             try:
-                initial_count = self.redis_client.execute_command("VCARD", self.VECTORSET_KEY)
+                initial_count = self.redis_client.execute_command("VCARD", vectorset_to_use)
                 initial_count = int(initial_count) if initial_count else 0
             except redis.ResponseError:
                 # VectorSet doesn't exist
@@ -837,7 +850,7 @@ Respond with a JSON object:
 
             # Delete the entire VectorSet - this is the most efficient way to clear all data
             # The VectorSet will be recreated automatically on the next VADD operation
-            result = self.redis_client.execute_command("DEL", self.VECTORSET_KEY)
+            result = self.redis_client.execute_command("DEL", vectorset_to_use)
 
             if result == 1:
                 print(f"✅ Successfully cleared all memories (deleted {initial_count} memories)")

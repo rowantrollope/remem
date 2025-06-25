@@ -25,15 +25,17 @@ load_dotenv()
 class LangGraphMemoryAgent:
     """A sophisticated memory agent using LangGraph for workflow orchestration."""
     
-    def __init__(self, model_name: str = "gpt-3.5-turbo", temperature: float = 0.1):
+    def __init__(self, model_name: str = "gpt-3.5-turbo", temperature: float = 0.1,
+                 vectorset_key: str = None):
         """Initialize the LangGraph memory agent.
-        
+
         Args:
             model_name: OpenAI model to use
             temperature: Temperature for the model
+            vectorset_key: Name of the vectorset to use (defaults to "memories")
         """
         # Initialize the underlying memory agent
-        self.memory_agent = MemoryAgent()
+        self.memory_agent = MemoryAgent(vectorset_key=vectorset_key)
         
         # Set the global memory agent for tools
         set_memory_agent(self.memory_agent)
