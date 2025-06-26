@@ -100,8 +100,7 @@ class MemoryExtraction:
                     "original_text": storage_result["original_text"],
                     "final_text": storage_result["final_text"],
                     "grounding_applied": storage_result["grounding_applied"],
-                    "timestamp": storage_result["timestamp"],
-                    "formatted_time": storage_result["formatted_time"]
+                    "created_at": storage_result["created_at"]
                 }
 
                 # Add grounding info if available
@@ -164,7 +163,7 @@ class MemoryExtraction:
             existing_memories_section += "The following information is ALREADY STORED about the user. DO NOT extract information that duplicates these existing memories:\n\n"
             for i, memory in enumerate(existing_memories, 1):
                 memory_text = memory.get('text', memory.get('final_text', ''))
-                memory_time = memory.get('formatted_time', 'Unknown time')
+                memory_time = memory.get('created_at', 'Unknown time')
                 existing_memories_section += f"{i}. {memory_text} (stored: {memory_time})\n"
             existing_memories_section += "\nONLY extract information that is NEW and NOT already captured in the above memories.\n"
 

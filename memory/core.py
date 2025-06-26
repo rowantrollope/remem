@@ -561,7 +561,6 @@ Respond with a JSON object:
         memory_id = str(uuid.uuid4())
 
         # Prepare data for storage
-        timestamp = datetime.now().timestamp()
         current_time_iso = datetime.now(timezone.utc).isoformat()
 
         # Convert embedding to list of string values for VADD
@@ -575,10 +574,8 @@ Respond with a JSON object:
                 "raw_text": cleaned_text,
                 "final_text": final_text,
                 "tags": tags,
-                "timestamp": timestamp,  # Keep for backward compatibility
-                "formatted_time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M"),
                 "grounding_applied": grounding_result is not None and grounding_result.get("grounding_applied", False),
-                # New temporal and usage tracking fields
+                # Temporal and usage tracking fields (ISO 8601 UTC format)
                 "created_at": current_time_iso,
                 "last_accessed_at": current_time_iso,  # Initialize to creation time
                 "access_count": 0  # Initialize to 0, will be incremented on first access
@@ -612,8 +609,7 @@ Respond with a JSON object:
                 "final_text": final_text,
                 "grounding_applied": grounding_result is not None and grounding_result.get("grounding_applied", False),
                 "tags": tags,
-                "timestamp": timestamp,
-                "formatted_time": datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+                "created_at": current_time_iso
             }
 
             # Add grounding information if available
@@ -680,14 +676,9 @@ Respond with a JSON object:
                         else:
                             metadata = {}
 
-                        # Handle backward compatibility for temporal and usage fields
-                        created_at = metadata.get("created_at")
-                        if not created_at and metadata.get("timestamp"):
-                            # Fallback to timestamp for older memories
-                            created_at = datetime.fromtimestamp(metadata["timestamp"], timezone.utc).isoformat()
-
                         # All memories are now nemes (atomic memories)
                         display_text = metadata.get("final_text", metadata.get("raw_text", ""))
+                        created_at = metadata.get("created_at")
 
                         memory = {
                             "id": element_id,
@@ -695,13 +686,11 @@ Respond with a JSON object:
                             "original_text": metadata.get("raw_text", ""),
                             "grounded_text": metadata.get("final_text", ""),
                             "tags": metadata.get("tags", []),
-                            "timestamp": metadata.get("timestamp", 0),
                             "score": score,  # Original vector similarity score
-                            "formatted_time": metadata.get("formatted_time", ""),
                             "grounding_applied": metadata.get("grounding_applied", False),
                             "grounding_info": metadata.get("grounding_info", {}),
                             "context_snapshot": metadata.get("context_snapshot", {}),
-                            # New temporal and usage fields with backward compatibility
+                            # Temporal and usage fields (ISO 8601 UTC format)
                             "created_at": created_at,
                             "last_accessed_at": metadata.get("last_accessed_at", created_at),
                             "access_count": metadata.get("access_count", 0),
@@ -717,13 +706,16 @@ Respond with a JSON object:
 
                     except Exception as e:
                         # Create a basic memory entry without metadata
+                        current_time_iso = datetime.now(timezone.utc).isoformat()
                         memory = {
                             "id": element_id,
                             "text": f"Memory {element_id} (metadata unavailable)",
                             "tags": [],
-                            "timestamp": 0,
                             "score": score,
-                            "formatted_time": "Unknown"
+                            "created_at": current_time_iso,
+                            "last_accessed_at": current_time_iso,
+                            "access_count": 0,
+                            "type": "neme"
                         }
                         memories.append(memory)
 
@@ -917,7 +909,7 @@ Respond with a JSON object:
                 'embedding_model': 'text-embedding-ada-002',
                 'redis_host': self.redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                 'redis_port': self.redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
 
         except redis.ResponseError:
@@ -930,7 +922,7 @@ Respond with a JSON object:
                 'embedding_model': 'text-embedding-ada-002',
                 'redis_host': self.redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                 'redis_port': self.redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'note': 'No memories stored yet - VectorSet will be created when first memory is added'
             }
         except Exception as e:
@@ -939,7 +931,7 @@ Respond with a JSON object:
                 'memory_count': 0,
                 'vector_dimension': 0,
                 'vectorset_name': self.VECTORSET_KEY,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
 
     def get_relevance_config(self) -> Dict[str, float]:

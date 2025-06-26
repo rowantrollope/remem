@@ -345,9 +345,9 @@ For every user request:
         return response
 
     def _get_timestamp(self) -> str:
-        """Get current timestamp as ISO string."""
-        from datetime import datetime
-        return datetime.now().isoformat()
+        """Get current timestamp as ISO string in UTC."""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
 
     def _check_and_extract_memories(self):
         """Check if conversation buffer should trigger memory extraction using context-aware approach."""
@@ -491,24 +491,19 @@ Respond with ONLY "YES" or "NO"."""
                 recent_memories = self.memory_agent.search_memories(phrase, top_k=3, min_similarity=0.85)
                 if recent_memories:
                     # Check if any recent memory is very similar and recent (within last hour)
-                    from datetime import datetime, timedelta
-                    one_hour_ago = datetime.now() - timedelta(hours=1)
+                    from datetime import datetime, timedelta, timezone
+                    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
                     for memory in recent_memories:
                         if not isinstance(memory, dict):
                             continue
 
                         memory_score = memory.get('score', 0)
-                        memory_time_str = memory.get('timestamp', '')
+                        memory_time_str = memory.get('created_at', '')
 
                         if memory_time_str and memory_score > 0.9:
                             try:
-                                # Handle both timestamp formats
-                                if isinstance(memory_time_str, (int, float)):
-                                    memory_time = datetime.fromtimestamp(memory_time_str)
-                                else:
-                                    memory_time = datetime.fromisoformat(str(memory_time_str).replace('Z', '+00:00'))
-
+                                memory_time = datetime.fromisoformat(str(memory_time_str).replace('Z', '+00:00'))
                                 if memory_time > one_hour_ago:
                                     print(f"🔄 MEMORY: Found very similar recent memory: {memory.get('text', '')[:50]}...")
                                     return True
@@ -647,7 +642,7 @@ Respond with ONLY "YES" or "NO"."""
             for memory in unique_memories.values():
                 text = memory.get('text', memory.get('final_text', ''))
                 score = memory.get('score', 0) * 100
-                time = memory.get('formatted_time', 'Unknown time')
+                time = memory.get('created_at', 'Unknown time')
 
                 # Simple categorization based on keywords
                 text_lower = text.lower()

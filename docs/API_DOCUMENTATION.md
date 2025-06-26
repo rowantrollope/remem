@@ -43,8 +43,7 @@ Store a fundamental memory unit with optional contextual grounding.
   "final_text": "User prefers window seats on flights (as of 2024-06-18)",
   "grounding_applied": true,
   "tags": ["preference", "travel"],
-  "timestamp": 1718726400.0,
-  "formatted_time": "2024-06-18 12:00:00"
+  "created_at": "2024-06-18T12:00:00Z"
 }
 ```
 

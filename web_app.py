@@ -7,7 +7,7 @@ REST API for Memory Agent
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
@@ -129,8 +129,7 @@ def api_store_neme():
         - final_text (str): Final stored text (grounded or original)
         - grounding_applied (bool): Whether grounding was applied
         - tags (list): Extracted tags from the memory
-        - timestamp (float): Unix timestamp
-        - formatted_time (str): Human-readable timestamp
+        - created_at (str): ISO 8601 UTC timestamp of memory creation
         - grounding_info (dict, optional): Details about grounding changes if applied
         - context_snapshot (dict, optional): Context used for grounding if applied
     """
@@ -167,8 +166,7 @@ def api_store_neme():
             'final_text': storage_result['final_text'],
             'grounding_applied': storage_result['grounding_applied'],
             'tags': storage_result['tags'],
-            'timestamp': storage_result['timestamp'],
-            'formatted_time': storage_result['formatted_time'],
+            'created_at': storage_result['created_at'],
             'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
         }
 
@@ -761,8 +759,8 @@ def api_create_agent_session():
             'system_prompt': system_prompt,
             'messages': [],
             'config': config,
-            'created_at': datetime.now().isoformat(),
-            'last_activity': datetime.now().isoformat(),
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'last_activity': datetime.now(timezone.utc).isoformat(),
             'use_memory': use_memory
         }
         print(f"")
@@ -845,7 +843,7 @@ def api_agent_session_message(session_id):
         user_message = {
             'role': 'user',
             'content': message,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
         session['messages'].append(user_message)
 
@@ -900,10 +898,10 @@ def _handle_standard_message(session_id, session, stream):
     assistant_message = {
         'role': 'assistant',
         'content': assistant_response,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat()
     }
     session['messages'].append(assistant_message)
-    session['last_activity'] = datetime.now().isoformat()
+    session['last_activity'] = datetime.now(timezone.utc).isoformat()
 
     return jsonify({
         'success': True,
@@ -926,7 +924,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     session['conversation_buffer'].append({
         'role': 'user',
         'content': user_message,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat()
     })
 
     # Retrieve relevant memories for context using advanced filtering with embedding optimization
@@ -1021,11 +1019,11 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     assistant_message = {
         'role': 'assistant',
         'content': assistant_response,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat()
     }
     session['messages'].append(assistant_message)
     session['conversation_buffer'].append(assistant_message)
-    session['last_activity'] = datetime.now().isoformat()
+    session['last_activity'] = datetime.now(timezone.utc).isoformat()
 
     # Check if we should extract memories (only if store_memory is True)
     if store_memory:
@@ -1103,7 +1101,7 @@ def _check_and_extract_memories(session_id, session):
             memory_texts = [mem.get("final_text", mem.get("raw_text", "Unknown")) for mem in extracted_memories]
             print(f"5) Identified {result['total_extracted']} memories: {', '.join([f'"{text[:40]}{"..." if len(text) > 40 else ""}"' for text in memory_texts])}")
             print(f"6) Saved {result['total_extracted']} memories to database")
-            session['last_extraction'] = datetime.now().isoformat()
+            session['last_extraction'] = datetime.now(timezone.utc).isoformat()
         else:
             print(f"5) No memories identified for extraction")
 
@@ -1291,7 +1289,7 @@ def api_health():
     return jsonify({
         'status': 'healthy' if memory_agent else 'unhealthy',
         'service': 'LangGraph Memory Agent API',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat()
     })
 
 
@@ -1319,7 +1317,7 @@ def api_get_config():
         # Add runtime information
         runtime_info = {
             "memory_agent_initialized": memory_agent is not None,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         if memory_agent:
@@ -1593,7 +1591,7 @@ def api_reload_config():
                         'langgraph_temperature': app_config['langgraph']['temperature']
                     }
                 },
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             })
         else:
             return jsonify({
@@ -1812,7 +1810,7 @@ def api_test_config():
             'success': True,
             'test_results': test_results,
             'message': 'Configuration test completed',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         })
 
     except Exception as e:
