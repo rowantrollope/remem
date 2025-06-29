@@ -1,0 +1,153 @@
+{
+  "examples": {
+    "openai_only": {
+      "description": "Use OpenAI for both tiers (default setup)",
+      "config": {
+        "llm": {
+          "tier1": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "api_key": "your-openai-api-key",
+            "timeout": 30
+          },
+          "tier2": {
+            "provider": "openai",
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.1,
+            "max_tokens": 1000,
+            "api_key": "your-openai-api-key",
+            "timeout": 30
+          }
+        }
+      }
+    },
+    "ollama_only": {
+      "description": "Use Ollama for both tiers (local setup)",
+      "config": {
+        "llm": {
+          "tier1": {
+            "provider": "ollama",
+            "model": "llama2",
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "base_url": "http://localhost:11434",
+            "timeout": 60
+          },
+          "tier2": {
+            "provider": "ollama",
+            "model": "mistral",
+            "temperature": 0.1,
+            "max_tokens": 1000,
+            "base_url": "http://localhost:11434",
+            "timeout": 30
+          }
+        }
+      }
+    },
+    "hybrid_openai_tier1_ollama_tier2": {
+      "description": "Use OpenAI for main conversations, Ollama for internal operations",
+      "config": {
+        "llm": {
+          "tier1": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "api_key": "your-openai-api-key",
+            "timeout": 30
+          },
+          "tier2": {
+            "provider": "ollama",
+            "model": "llama2",
+            "temperature": 0.1,
+            "max_tokens": 1000,
+            "base_url": "http://localhost:11434",
+            "timeout": 30
+          }
+        }
+      }
+    },
+    "hybrid_ollama_tier1_openai_tier2": {
+      "description": "Use Ollama for main conversations, OpenAI for internal operations",
+      "config": {
+        "llm": {
+          "tier1": {
+            "provider": "ollama",
+            "model": "llama2",
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "base_url": "http://localhost:11434",
+            "timeout": 60
+          },
+          "tier2": {
+            "provider": "openai",
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.1,
+            "max_tokens": 1000,
+            "api_key": "your-openai-api-key",
+            "timeout": 30
+          }
+        }
+      }
+    }
+  },
+  "usage_instructions": {
+    "api_configuration": {
+      "description": "Configure via API endpoints",
+      "steps": [
+        "1. GET /api/config to see current configuration",
+        "2. PUT /api/config with your desired LLM configuration",
+        "3. POST /api/config/reload to apply changes",
+        "4. POST /api/config/test to validate configuration"
+      ]
+    },
+    "environment_variables": {
+      "description": "Set API keys via environment variables",
+      "variables": {
+        "OPENAI_API_KEY": "Your OpenAI API key (required for OpenAI provider)",
+        "OLLAMA_BASE_URL": "Ollama server URL (optional, defaults to http://localhost:11434)"
+      }
+    },
+    "tier_usage": {
+      "tier1": {
+        "description": "Primary/Conversational LLM",
+        "use_cases": [
+          "User-facing chat sessions",
+          "Main question answering with full context",
+          "Complex reasoning tasks",
+          "LangGraph memory agent responses"
+        ]
+      },
+      "tier2": {
+        "description": "Internal/Utility LLM",
+        "use_cases": [
+          "Memory extraction from conversations",
+          "Context dependency analysis",
+          "Memory grounding operations",
+          "Input validation and preprocessing",
+          "Memory filtering and relevance scoring",
+          "Configuration testing"
+        ]
+      }
+    }
+  },
+  "model_recommendations": {
+    "openai": {
+      "tier1": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+      "tier2": ["gpt-3.5-turbo", "gpt-3.5-turbo-16k"]
+    },
+    "ollama": {
+      "tier1": ["llama2", "mistral", "codellama", "neural-chat"],
+      "tier2": ["llama2", "mistral", "phi"]
+    }
+  },
+  "performance_tips": [
+    "Use faster/cheaper models for Tier 2 operations",
+    "Set lower temperature (0.1-0.3) for Tier 2 for consistent results",
+    "Use higher max_tokens for Tier 1 to allow detailed responses",
+    "Consider using Ollama for Tier 2 to reduce API costs",
+    "Test configurations with /api/config/test before applying"
+  ]
+}

@@ -23,6 +23,10 @@ import openai
 # Load environment variables
 load_dotenv()
 
+# Import LLM manager
+sys.path.append('..')
+from llm_manager import get_llm_manager
+
 
 class RelevanceConfig:
     """Configuration for memory relevance scoring parameters."""
@@ -379,8 +383,11 @@ Respond with a JSON object listing the detected references:
 If no context-dependent references are found, return empty arrays for all categories."""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            # Use Tier 2 LLM for context analysis
+            llm_manager = get_llm_manager()
+            tier1_client = llm_manager.get_tier1_client()
+
+            response = tier1_client.chat_completion(
                 messages=[
                     {"role": "user", "content": analysis_prompt}
                 ],
@@ -388,10 +395,11 @@ If no context-dependent references are found, return empty arrays for all catego
                 max_tokens=300
             )
 
-            analysis_result = response.choices[0].message.content.strip()
+            analysis_result = response['content'].strip()
 
             # Parse JSON response
             try:
+                print(f"Dependecies found... {analysis_result}")
                 dependencies = json.loads(analysis_result)
                 return dependencies
             except json.JSONDecodeError:
@@ -476,8 +484,11 @@ Respond with a JSON object:
 }}"""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            # Use Tier 1 LLM for memory grounding
+            llm_manager = get_llm_manager()
+            tier1_client = llm_manager.get_tier1_client()
+
+            response = tier1_client.chat_completion(
                 messages=[
                     {"role": "user", "content": grounding_prompt}
                 ],
@@ -485,7 +496,7 @@ Respond with a JSON object:
                 max_tokens=500
             )
 
-            grounding_result = response.choices[0].message.content.strip()
+            grounding_result = response['content'].strip()
 
             try:
                 grounding_data = json.loads(grounding_result)
@@ -611,7 +622,7 @@ Respond with a JSON object:
                 "tags": tags,
                 "created_at": current_time_iso
             }
-
+            print(response)
             # Add grounding information if available
             if grounding_result:
                 response["grounding_info"] = {
@@ -680,6 +691,15 @@ Respond with a JSON object:
                         display_text = metadata.get("final_text", metadata.get("raw_text", ""))
                         created_at = metadata.get("created_at")
 
+                        # Format timestamp for display
+                        formatted_time = "Unknown time"
+                        if created_at:
+                            try:
+                                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                                formatted_time = dt.strftime("%Y-%m-%d %H:%M")
+                            except (ValueError, TypeError):
+                                formatted_time = "Invalid time"
+
                         memory = {
                             "id": element_id,
                             "text": display_text,
@@ -694,6 +714,7 @@ Respond with a JSON object:
                             "created_at": created_at,
                             "last_accessed_at": metadata.get("last_accessed_at", created_at),
                             "access_count": metadata.get("access_count", 0),
+                            "formatted_time": formatted_time,  # Human-readable timestamp
                             # All memories are now nemes (atomic memories)
                             "type": "neme"
                         }
@@ -707,6 +728,8 @@ Respond with a JSON object:
                     except Exception as e:
                         # Create a basic memory entry without metadata
                         current_time_iso = datetime.now(timezone.utc).isoformat()
+                        dt = datetime.now(timezone.utc)
+                        formatted_time = dt.strftime("%Y-%m-%d %H:%M")
                         memory = {
                             "id": element_id,
                             "text": f"Memory {element_id} (metadata unavailable)",
@@ -715,6 +738,7 @@ Respond with a JSON object:
                             "created_at": current_time_iso,
                             "last_accessed_at": current_time_iso,
                             "access_count": 0,
+                            "formatted_time": formatted_time,
                             "type": "neme"
                         }
                         memories.append(memory)

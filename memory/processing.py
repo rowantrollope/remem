@@ -7,6 +7,7 @@ including validation, relevance filtering, and formatting.
 """
 
 import json
+import sys
 from typing import List, Dict, Any
 import openai
 import os
@@ -14,6 +15,10 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Import LLM manager
+sys.path.append('..')
+from llm_manager import get_llm_manager
 
 
 class MemoryProcessing:
@@ -60,8 +65,11 @@ Response format:
 Be inclusive about what qualifies as a memory question - if it could be asking about stored personal information, treat it as SEARCH."""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            # Use Tier 2 LLM for input validation
+            llm_manager = get_llm_manager()
+            tier2_client = llm_manager.get_tier2_client()
+
+            response = tier2_client.chat_completion(
                 messages=[
                     {"role": "user", "content": validation_prompt}
                 ],
@@ -69,7 +77,7 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
                 max_tokens=200
             )
 
-            validation_result = response.choices[0].message.content.strip()
+            validation_result = response['content'].strip()
 
             if validation_result.startswith("SEARCH:"):
                 optimized_question = validation_result[7:].strip()

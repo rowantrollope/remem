@@ -7,6 +7,7 @@ combine memory search with LLM reasoning and relevance filtering.
 """
 
 import json
+import sys
 from typing import Dict, Any, List
 import openai
 import os
@@ -14,6 +15,10 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Import LLM manager
+sys.path.append('..')
+from llm_manager import get_llm_manager
 
 
 class MemoryReasoning:
@@ -63,7 +68,8 @@ class MemoryReasoning:
         embedding_query = validation_result.get("embedding_query") or validation_result["content"]
 
         # Search for relevant memories using embedding-optimized query
-        memories = self.memory_core.search_memories(embedding_query, top_k, filterBy, min_similarity)
+        search_result = self.memory_core.search_memories(embedding_query, top_k, filterBy, min_similarity)
+        memories = search_result['memories'] if isinstance(search_result, dict) else search_result
 
         if not memories:
             return {
@@ -144,9 +150,11 @@ Available user memories (already filtered for relevance):
 Please provide a helpful, personalized answer using the relevant information from these memories. Consider the user's preferences, constraints, family situation, past experiences, and other personal context when formulating your response. If the memories don't contain sufficient information for a complete answer, explain what additional information would be helpful and provide what guidance you can based on what you know about the user."""
 
         try:
-            # Call OpenAI to generate the answer
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            # Use Tier 1 LLM for main question answering
+            llm_manager = get_llm_manager()
+            tier1_client = llm_manager.get_tier1_client()
+
+            response = tier1_client.chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -155,7 +163,7 @@ Please provide a helpful, personalized answer using the relevant information fro
                 max_tokens=500
             )
 
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response['content'].strip()
             print(f"✅ Generated answer with {len(relevant_memories)} relevant memory context(s) (filtered from {len(memories)} total)")
 
             # Parse the JSON response from OpenAI

@@ -7,6 +7,7 @@ conversational data using LLM analysis.
 """
 
 import json
+import sys
 from typing import List, Dict, Any, Optional
 import openai
 import os
@@ -14,6 +15,10 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Import LLM manager
+sys.path.append('..')
+from llm_manager import get_llm_manager
 
 
 class MemoryExtraction:
@@ -445,8 +450,11 @@ Be highly selective and focus only on information that would significantly impro
             Dictionary with extracted facts and filtering information, or None if failed
         """
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            # Use Tier 2 LLM for memory extraction
+            llm_manager = get_llm_manager()
+            tier2_client = llm_manager.get_tier2_client()
+
+            response = tier2_client.chat_completion(
                 messages=[
                     {"role": "user", "content": extraction_prompt}
                 ],
@@ -454,7 +462,7 @@ Be highly selective and focus only on information that would significantly impro
                 max_tokens=1500   # Allow for detailed extraction
             )
 
-            extraction_result = response.choices[0].message.content.strip()
+            extraction_result = response['content'].strip()
             print(f"🔍 LLM extraction response received ({len(extraction_result)} characters)")
 
             # Parse JSON response

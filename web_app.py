@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
+from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager, get_llm_manager
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -37,6 +38,26 @@ app_config = {
         "port": int(os.getenv("REDIS_PORT", "6381")),
         "db": int(os.getenv("REDIS_DB", "0")),
         "vectorset_key": "memories"
+    },
+    "llm": {
+        "tier1": {
+            "provider": "openai",  # "openai" or "ollama"
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.7,
+            "max_tokens": 2000,
+            "base_url": None,  # For Ollama: "http://localhost:11434"
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "timeout": 30
+        },
+        "tier2": {
+            "provider": "ollama",  # "openai" or "ollama"
+            "model": "deepseek-r1:7b",
+            "temperature": 0.1,
+            "max_tokens": 1000,
+            "base_url": "http://localhost:11434",  # For Ollama: "http://localhost:11434"
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "timeout": 30
+        }
     },
     "openai": {
         "api_key": os.getenv("OPENAI_API_KEY", ""),
@@ -63,6 +84,37 @@ app_config = {
         "cors_enabled": True
     }
 }
+
+def init_llm_manager():
+    """Initialize the LLM manager with current configuration."""
+    try:
+        # Create LLM configurations for both tiers
+        tier1_config = LLMConfig(
+            provider=app_config["llm"]["tier1"]["provider"],
+            model=app_config["llm"]["tier1"]["model"],
+            temperature=app_config["llm"]["tier1"]["temperature"],
+            max_tokens=app_config["llm"]["tier1"]["max_tokens"],
+            base_url=app_config["llm"]["tier1"]["base_url"],
+            api_key=app_config["llm"]["tier1"]["api_key"],
+            timeout=app_config["llm"]["tier1"]["timeout"]
+        )
+
+        tier2_config = LLMConfig(
+            provider=app_config["llm"]["tier2"]["provider"],
+            model=app_config["llm"]["tier2"]["model"],
+            temperature=app_config["llm"]["tier2"]["temperature"],
+            max_tokens=app_config["llm"]["tier2"]["max_tokens"],
+            base_url=app_config["llm"]["tier2"]["base_url"],
+            api_key=app_config["llm"]["tier2"]["api_key"],
+            timeout=app_config["llm"]["tier2"]["timeout"]
+        )
+
+        # Initialize the global LLM manager
+        initialize_llm_manager(tier1_config, tier2_config)
+        return True
+    except Exception as e:
+        print(f"Failed to initialize LLM manager: {e}")
+        return False
 
 def init_memory_agent():
     """Initialize the LangGraph memory agent with current configuration."""
@@ -876,23 +928,24 @@ def _handle_standard_message(session_id, session, stream):
             'content': msg['content']
         })
 
-    # Get response from OpenAI
-    if not openai_client:
-        return jsonify({'error': 'OpenAI client not initialized'}), 500
+    # Get response from Tier 1 LLM (primary conversational)
+    try:
+        llm_manager = get_llm_manager()
+        tier1_client = llm_manager.get_tier1_client()
 
-    response = openai_client.chat.completions.create(
-        model=session['config'].get('model', 'gpt-3.5-turbo'),
-        messages=llm_messages,
-        temperature=session['config'].get('temperature', 0.7),
-        max_tokens=session['config'].get('max_tokens', 1000),
-        stream=stream
-    )
+        response = tier1_client.chat_completion(
+            messages=llm_messages,
+            temperature=session['config'].get('temperature', 0.7),
+            max_tokens=session['config'].get('max_tokens', 1000)
+        )
 
-    if stream:
-        # TODO: Implement streaming response
-        return jsonify({'error': 'Streaming not yet implemented'}), 501
+        if stream:
+            # TODO: Implement streaming response
+            return jsonify({'error': 'Streaming not yet implemented'}), 501
 
-    assistant_response = response.choices[0].message.content
+        assistant_response = response['content']
+    except Exception as e:
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
     # Add assistant response to session
     assistant_message = {
@@ -997,23 +1050,24 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
             'content': msg['content']
         })
 
-    # Get response from OpenAI
-    if not openai_client:
-        return jsonify({'error': 'OpenAI client not initialized'}), 500
+    # Get response from Tier 1 LLM (primary conversational)
+    try:
+        llm_manager = get_llm_manager()
+        tier1_client = llm_manager.get_tier1_client()
 
-    response = openai_client.chat.completions.create(
-        model=session['config'].get('model', 'gpt-3.5-turbo'),
-        messages=llm_messages,
-        temperature=session['config'].get('temperature', 0.7),
-        max_tokens=session['config'].get('max_tokens', 1000),
-        stream=stream
-    )
+        response = tier1_client.chat_completion(
+            messages=llm_messages,
+            temperature=session['config'].get('temperature', 0.7),
+            max_tokens=session['config'].get('max_tokens', 1000)
+        )
 
-    if stream:
-        # TODO: Implement streaming response
-        return jsonify({'error': 'Streaming not yet implemented'}), 501
+        if stream:
+            # TODO: Implement streaming response
+            return jsonify({'error': 'Streaming not yet implemented'}), 501
 
-    assistant_response = response.choices[0].message.content
+        assistant_response = response['content']
+    except Exception as e:
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
     # Add assistant response to session and buffer
     assistant_message = {
@@ -1115,8 +1169,10 @@ def _check_and_extract_memories(session_id, session):
 
 def _contains_extractable_info(messages):
     """Check if messages contain information worth extracting using LLM evaluation."""
-    if not openai_client:
-        # Fallback to keyword-based approach if OpenAI client not available
+    try:
+        llm_manager = get_llm_manager()
+    except:
+        # Fallback to keyword-based approach if LLM manager not available
         return _contains_extractable_info_fallback(messages)
 
     # Combine messages into conversation text
@@ -1151,14 +1207,17 @@ CONVERSATIONAL TEXT TO EVALUATE:
 
 Respond with ONLY "YES" if the text contains valuable information worth remembering, or "NO" if it doesn't. Do not include any explanation."""
 
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+        # Use Tier 2 LLM for memory extraction evaluation
+        llm_manager = get_llm_manager()
+        tier2_client = llm_manager.get_tier2_client()
+
+        response = tier2_client.chat_completion(
             messages=[{"role": "user", "content": evaluation_prompt}],
             temperature=0.1,  # Low temperature for consistent evaluation
             max_tokens=10     # We only need YES or NO
         )
 
-        result = response.choices[0].message.content.strip().upper()
+        result = response['content'].strip().upper()
         return result == "YES"
 
     except Exception as e:
@@ -1314,11 +1373,26 @@ def api_get_config():
         if safe_config["openai"]["api_key"]:
             safe_config["openai"]["api_key"] = safe_config["openai"]["api_key"][:8] + "..." + safe_config["openai"]["api_key"][-4:]
 
+        # Mask LLM API keys
+        if safe_config["llm"]["tier1"]["api_key"]:
+            safe_config["llm"]["tier1"]["api_key"] = safe_config["llm"]["tier1"]["api_key"][:8] + "..." + safe_config["llm"]["tier1"]["api_key"][-4:]
+        if safe_config["llm"]["tier2"]["api_key"]:
+            safe_config["llm"]["tier2"]["api_key"] = safe_config["llm"]["tier2"]["api_key"][:8] + "..." + safe_config["llm"]["tier2"]["api_key"][-4:]
+
         # Add runtime information
         runtime_info = {
             "memory_agent_initialized": memory_agent is not None,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
+
+        # Add LLM manager status
+        try:
+            llm_mgr = get_llm_manager()
+            runtime_info["llm_manager_initialized"] = True
+            runtime_info["llm_tier1_provider"] = llm_mgr.tier1_config.provider
+            runtime_info["llm_tier2_provider"] = llm_mgr.tier2_config.provider
+        except Exception:
+            runtime_info["llm_manager_initialized"] = False
 
         if memory_agent:
             try:
@@ -1347,6 +1421,7 @@ def api_update_config():
     Body:
         Configuration object with any subset of configuration categories:
         - redis: {host, port, db, vectorset_key}
+        - llm: {tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}, tier2: {...}}
         - openai: {api_key, organization, embedding_model, embedding_dimension, chat_model, temperature}
         - langgraph: {model_name, temperature, system_prompt_enabled}
         - memory_agent: {default_top_k, apply_grounding_default, validation_enabled}
@@ -1384,6 +1459,59 @@ def api_update_config():
                         app_config['redis'][key] = new_value
                         changes_made.append(f"redis.{key}: {old_value} → {new_value}")
                         requires_restart = True
+
+        # Update LLM configuration
+        if 'llm' in data:
+            llm_config = data['llm']
+            for tier in ['tier1', 'tier2']:
+                if tier in llm_config:
+                    tier_config = llm_config[tier]
+
+                    # Handle string fields
+                    for key in ['provider', 'model', 'base_url']:
+                        if key in tier_config:
+                            old_value = app_config['llm'][tier].get(key)
+                            new_value = tier_config[key]
+
+                            if old_value != new_value:
+                                app_config['llm'][tier][key] = new_value
+                                changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
+                                requires_restart = True
+
+                    # Handle API key with masking
+                    if 'api_key' in tier_config:
+                        old_value = app_config['llm'][tier].get('api_key')
+                        new_value = tier_config['api_key']
+
+                        if old_value != new_value:
+                            app_config['llm'][tier]['api_key'] = new_value
+                            masked_old = old_value[:8] + "..." + old_value[-4:] if old_value else "None"
+                            masked_new = new_value[:8] + "..." + new_value[-4:] if new_value else "None"
+                            changes_made.append(f"llm.{tier}.api_key: {masked_old} → {masked_new}")
+                            requires_restart = True
+
+                    # Handle numeric fields
+                    for key in ['temperature', 'max_tokens', 'timeout']:
+                        if key in tier_config:
+                            try:
+                                old_value = app_config['llm'][tier].get(key)
+                                if key == 'temperature':
+                                    new_value = float(tier_config[key])
+                                else:
+                                    new_value = int(tier_config[key])
+
+                                if old_value != new_value:
+                                    app_config['llm'][tier][key] = new_value
+                                    changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
+                                    requires_restart = True
+                            except (ValueError, TypeError):
+                                return jsonify({'error': f'LLM {tier}.{key} must be a number'}), 400
+
+                    # Validate provider
+                    if 'provider' in tier_config:
+                        provider = tier_config['provider'].lower()
+                        if provider not in ['openai', 'ollama']:
+                            return jsonify({'error': f'LLM provider must be "openai" or "ollama", got "{provider}"'}), 400
 
         # Update OpenAI configuration
         if 'openai' in data:
@@ -1559,8 +1687,11 @@ def api_reload_config():
             except:
                 pass
 
+        # Reinitialize the LLM manager with current configuration
+        llm_success = init_llm_manager()
+
         # Reinitialize the memory agent with current configuration
-        success = init_memory_agent()
+        success = init_memory_agent() and llm_success
 
         if success:
             # Get new agent state
@@ -1724,6 +1855,97 @@ def api_test_config():
             if not openai_test['valid']:
                 test_results['overall_valid'] = False
 
+        # Test LLM configuration
+        if 'llm' in data:
+            llm_config = data['llm']
+            llm_test = {
+                'valid': True,
+                'errors': [],
+                'warnings': [],
+                'tier_tests': {}
+            }
+
+            for tier in ['tier1', 'tier2']:
+                if tier in llm_config:
+                    tier_config = llm_config[tier]
+                    tier_test = {
+                        'valid': True,
+                        'errors': [],
+                        'warnings': []
+                    }
+
+                    # Validate provider
+                    provider = tier_config.get('provider', '').lower()
+                    if provider and provider not in ['openai', 'ollama']:
+                        tier_test['errors'].append(f'Provider must be "openai" or "ollama", got "{provider}"')
+                        tier_test['valid'] = False
+
+                    # Validate numeric fields
+                    if 'temperature' in tier_config:
+                        try:
+                            temp = float(tier_config['temperature'])
+                            if temp < 0 or temp > 2:
+                                tier_test['warnings'].append('Temperature should be between 0 and 2')
+                        except (ValueError, TypeError):
+                            tier_test['errors'].append('Temperature must be a number')
+                            tier_test['valid'] = False
+
+                    if 'max_tokens' in tier_config:
+                        try:
+                            tokens = int(tier_config['max_tokens'])
+                            if tokens <= 0:
+                                tier_test['errors'].append('Max tokens must be positive')
+                                tier_test['valid'] = False
+                        except (ValueError, TypeError):
+                            tier_test['errors'].append('Max tokens must be an integer')
+                            tier_test['valid'] = False
+
+                    if 'timeout' in tier_config:
+                        try:
+                            timeout = int(tier_config['timeout'])
+                            if timeout <= 0:
+                                tier_test['errors'].append('Timeout must be positive')
+                                tier_test['valid'] = False
+                        except (ValueError, TypeError):
+                            tier_test['errors'].append('Timeout must be an integer')
+                            tier_test['valid'] = False
+
+                    # Test connection if enough info provided
+                    if provider and tier_config.get('model'):
+                        try:
+                            test_config = LLMConfig(
+                                provider=provider,
+                                model=tier_config['model'],
+                                temperature=tier_config.get('temperature', 0.7),
+                                max_tokens=tier_config.get('max_tokens', 1000),
+                                base_url=tier_config.get('base_url'),
+                                api_key=tier_config.get('api_key'),
+                                timeout=tier_config.get('timeout', 30)
+                            )
+
+                            if provider == 'openai':
+                                from llm_manager import OpenAIClient
+                                test_client = OpenAIClient(test_config)
+                            else:  # ollama
+                                from llm_manager import OllamaClient
+                                test_client = OllamaClient(test_config)
+
+                            connection_result = test_client.test_connection()
+                            tier_test['connection_test'] = connection_result
+
+                            if not connection_result['success']:
+                                tier_test['warnings'].append(f'Connection test failed: {connection_result.get("error", "Unknown error")}')
+                        except Exception as e:
+                            tier_test['warnings'].append(f'Could not test connection: {str(e)}')
+
+                    llm_test['tier_tests'][tier] = tier_test
+                    if not tier_test['valid']:
+                        llm_test['valid'] = False
+
+            test_results['tests']['llm'] = llm_test
+            if not llm_test['valid']:
+                test_results['overall_valid'] = False
+
         # Test LangGraph configuration
         if 'langgraph' in data:
             langgraph_config = data['langgraph']
@@ -1823,6 +2045,13 @@ if __name__ == '__main__':
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY not found in environment variables.")
         print("Please set your OpenAI API key in the .env file or environment.")
+        exit(1)
+
+    # Initialize LLM manager
+    if init_llm_manager():
+        print("✅ LLM manager ready")
+    else:
+        print("❌ Failed to initialize LLM manager")
         exit(1)
 
     # Initialize LangGraph memory agent
