@@ -7,6 +7,7 @@ REST API for Memory Agent
 import os
 import json
 import uuid
+import requests
 from datetime import datetime, timezone
 from typing import Dict, Any
 from flask import Flask, render_template, request, jsonify
@@ -14,6 +15,7 @@ from flask_cors import CORS
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
 from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager, get_llm_manager
+from optimizations.performance_optimizer import init_performance_optimizer, get_performance_optimizer, optimize_memory_agent
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -82,6 +84,32 @@ app_config = {
         "port": 5001,
         "debug": True,
         "cors_enabled": True
+    },
+    "performance": {
+        "cache_enabled": True,
+        "use_semantic_cache": True,
+        "cache_default_ttl": 3600,
+        "optimization_enabled": True,
+        "batch_processing_enabled": True,
+        "semantic_similarity_threshold": 0.85,
+        "cache_ttl_settings": {
+            "query_optimization": 7200,
+            "memory_relevance": 1800,
+            "context_analysis": 3600,
+            "memory_grounding": 1800,
+            "extraction_evaluation": 900,
+            "conversation": 300,
+            "answer_generation": 1800
+        },
+        "semantic_similarity_thresholds": {
+            "query_optimization": 0.90,
+            "memory_relevance": 0.85,
+            "context_analysis": 0.88,
+            "memory_grounding": 0.82,
+            "extraction_evaluation": 0.80,
+            "conversation": 0.95,
+            "answer_generation": 0.87
+        }
     }
 }
 
@@ -120,6 +148,29 @@ def init_memory_agent():
     """Initialize the LangGraph memory agent with current configuration."""
     global memory_agent
     try:
+        # Initialize performance optimizer if enabled
+        optimizer = None
+        if app_config["performance"]["optimization_enabled"]:
+            optimizer = init_performance_optimizer(
+                redis_host=app_config["redis"]["host"],
+                redis_port=app_config["redis"]["port"],
+                redis_db=app_config["redis"]["db"],
+                cache_enabled=app_config["performance"]["cache_enabled"],
+                use_semantic_cache=app_config["performance"]["use_semantic_cache"]
+            )
+            cache_type = "semantic vectorset" if app_config["performance"]["use_semantic_cache"] else "hash-based"
+            print(f"✅ Performance optimizer initialized ({cache_type} caching)")
+
+            # CRITICAL: Wrap the LLM manager with caching
+            if app_config["performance"]["cache_enabled"]:
+                llm_manager = get_llm_manager()
+                cached_llm_manager = optimizer.optimize_llm_manager(llm_manager)
+                
+                # Replace the global LLM manager with the cached version
+                import llm_manager as llm_manager_module
+                llm_manager_module.llm_manager = cached_llm_manager
+                print(f"✅ LLM manager wrapped with {cache_type} caching")
+
         # Create memory agent with current Redis configuration
         base_memory_agent = MemoryAgent(
             redis_host=app_config["redis"]["host"],
@@ -127,6 +178,14 @@ def init_memory_agent():
             redis_db=app_config["redis"]["db"],
             vectorset_key=app_config["redis"]["vectorset_key"]
         )
+
+        # Apply performance optimizations if enabled
+        if app_config["performance"]["optimization_enabled"]:
+            base_memory_agent = optimize_memory_agent(
+                base_memory_agent,
+                cache_enabled=app_config["performance"]["cache_enabled"]
+            )
+            print("✅ Memory agent optimizations applied")
 
         # Create LangGraph agent with current OpenAI configuration
         memory_agent = LangGraphMemoryAgent(
@@ -586,9 +645,9 @@ def api_kline_recall():
         memories = search_result['memories']
         filtering_info = search_result['filtering_info']
 
-        # Apply LLM filtering if requested (use original query for relevance filtering)
+        # Apply LLM filtering if explicitly requested (now optional and defaults to false)
         if use_llm_filtering and memories:
-            print(f"🤖 K-LINE API: Applying LLM filtering to {len(memories)} memories")
+            print(f"🤖 K-LINE API: Applying LLM filtering to {len(memories)} memories (explicitly requested)")
             filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(query, memories)
 
             # Track filtering statistics
@@ -597,6 +656,8 @@ def api_kline_recall():
             print(f"🤖 K-LINE API: LLM filtering kept {filtered_count}/{original_count} memories")
 
             memories = filtered_memories
+        elif memories:
+            print(f"🤖 K-LINE API: Sending {len(memories)} memories directly to mental state construction (no pre-filtering)")
 
         # Construct K-line (mental state) from memories
         if memories:
@@ -1011,30 +1072,32 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
             filtering_info = search_result['filtering_info']
 
         if memory_results:
-            print(f"3) Found {len(memory_results)} memories, applying LLM filtering...")
-            # Apply LLM filtering for better relevance using original user message (not optimized query)
-            filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(user_message, memory_results)
-
-            # Track filtering statistics
-            original_count = len(memory_results)
-            filtered_count = len(filtered_memories)
-            print(f"3) LLM filtering kept {filtered_count}/{original_count} memories")
-
-            relevant_memories = filtered_memories
+            print(f"3) Found {len(memory_results)} memories, sending directly to LLM (no pre-filtering)")
+            relevant_memories = memory_results
         else:
             print(f"3) No relevant memories found")
+            relevant_memories = []
     except Exception as e:
         print(f"⚠️ Memory search failed: {e}")
 
     # Prepare enhanced system prompt with memory context
     enhanced_system_prompt = session['system_prompt']
     if relevant_memories:
-        memory_context = "\n\\Possibly relevant information from previous interactions:\n"
+        memory_context = "\n\n==== MEMORY CONTEXT ====\n"
+        memory_context += "Here are potentially relevant memories from previous interactions:\n\n"
         for i, memory in enumerate(relevant_memories, 1):
-            # All memories are now nemes (atomic memories)
-            memory_context += f"{i}. {memory['text']}\n"
+            # Include similarity score and timestamp for context
+            score_percent = memory.get('score', 0) * 100
+            timestamp = memory.get('formatted_time', 'Unknown time')
+            memory_context += f"Memory {i} (Similarity: {score_percent:.1f}%, {timestamp}):\n{memory['text']}\n\n"
 
-        memory_context += "\nEvaluate whether the memory is relevant to this prompt or not (discard if not relevant) if relevant, use this information to provide more personalized and contextual responses."
+        memory_context += "INSTRUCTIONS FOR USING MEMORIES:\n"
+        memory_context += "- Only use memories that are directly relevant to the current request\n"
+        memory_context += "- Ignore memories that don't relate to the user's current question or need\n"
+        memory_context += "- Use relevant memories to provide personalized, contextual responses\n"
+        memory_context += "- Consider the user's preferences, constraints, and past experiences when applicable\n"
+        memory_context += "- If no memories are relevant, respond based on the current conversation only\n"
+        memory_context += "==== END MEMORY CONTEXT ====\n"
         enhanced_system_prompt += memory_context
 
     # Prepare messages for LLM
@@ -1054,7 +1117,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     try:
         llm_manager = get_llm_manager()
         tier1_client = llm_manager.get_tier1_client()
-
+        print(f"4) Sending message to Tier 1 LLM: {llm_messages}")
         response = tier1_client.chat_completion(
             messages=llm_messages,
             temperature=session['config'].get('temperature', 0.7),
@@ -1351,6 +1414,390 @@ def api_health():
         'timestamp': datetime.now(timezone.utc).isoformat()
     })
 
+# =============================================================================
+# LLM APIs - LLM provider management and model information
+# =============================================================================
+
+# Simple in-memory cache for Ollama models
+ollama_models_cache = {
+    'data': None,
+    'timestamp': None,
+    'ttl': 45  # Cache for 45 seconds
+}
+
+@app.route('/api/llm/config', methods=['GET'])
+def api_get_llm_config():
+    """Get current LLM configuration.
+
+    Returns:
+        JSON with LLM configuration including tier1 and tier2 settings
+    """
+    try:
+        # Create a safe copy of LLM config without sensitive data
+        safe_llm_config = json.loads(json.dumps(app_config["llm"]))
+
+        # Mask API keys
+        if safe_llm_config["tier1"]["api_key"]:
+            safe_llm_config["tier1"]["api_key"] = safe_llm_config["tier1"]["api_key"][:8] + "..." + safe_llm_config["tier1"]["api_key"][-4:]
+        if safe_llm_config["tier2"]["api_key"]:
+            safe_llm_config["tier2"]["api_key"] = safe_llm_config["tier2"]["api_key"][:8] + "..." + safe_llm_config["tier2"]["api_key"][-4:]
+
+        # Add runtime information
+        runtime_info = {
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+        # Add LLM manager status
+        try:
+            llm_mgr = get_llm_manager()
+            runtime_info["llm_manager_initialized"] = True
+            runtime_info["tier1_provider"] = llm_mgr.tier1_config.provider
+            runtime_info["tier2_provider"] = llm_mgr.tier2_config.provider
+            runtime_info["tier1_model"] = llm_mgr.tier1_config.model
+            runtime_info["tier2_model"] = llm_mgr.tier2_config.model
+        except Exception:
+            runtime_info["llm_manager_initialized"] = False
+
+        return jsonify({
+            'success': True,
+            'llm_config': safe_llm_config,
+            'runtime': runtime_info
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/llm/config', methods=['PUT'])
+def api_update_llm_config():
+    """Update LLM configuration.
+
+    Body:
+        LLM configuration object:
+        - tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}
+        - tier2: {provider, model, temperature, max_tokens, base_url, api_key, timeout}
+
+    Returns:
+        JSON with success status, updated configuration, and any warnings
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({'error': 'LLM configuration data is required'}), 400
+
+        warnings = []
+        changes_made = []
+        requires_restart = False
+
+        # Update LLM configuration
+        for tier in ['tier1', 'tier2']:
+            if tier in data:
+                tier_config = data[tier]
+
+                # Handle string fields
+                for key in ['provider', 'model', 'base_url']:
+                    if key in tier_config:
+                        old_value = app_config['llm'][tier].get(key)
+                        new_value = tier_config[key]
+
+                        if old_value != new_value:
+                            app_config['llm'][tier][key] = new_value
+                            changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
+                            requires_restart = True
+
+                # Handle API key with masking
+                if 'api_key' in tier_config:
+                    old_value = app_config['llm'][tier].get('api_key')
+                    new_value = tier_config['api_key']
+
+                    if old_value != new_value:
+                        app_config['llm'][tier]['api_key'] = new_value
+                        masked_old = old_value[:8] + "..." + old_value[-4:] if old_value else "None"
+                        masked_new = new_value[:8] + "..." + new_value[-4:] if new_value else "None"
+                        changes_made.append(f"llm.{tier}.api_key: {masked_old} → {masked_new}")
+                        requires_restart = True
+
+                # Handle numeric fields
+                for key in ['temperature', 'max_tokens', 'timeout']:
+                    if key in tier_config:
+                        try:
+                            old_value = app_config['llm'][tier].get(key)
+                            if key == 'temperature':
+                                new_value = float(tier_config[key])
+                            else:
+                                new_value = int(tier_config[key])
+
+                            if old_value != new_value:
+                                app_config['llm'][tier][key] = new_value
+                                changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
+                                requires_restart = True
+                        except (ValueError, TypeError):
+                            return jsonify({'error': f'LLM {tier}.{key} must be a number'}), 400
+
+                # Validate provider
+                if 'provider' in tier_config:
+                    provider = tier_config['provider'].lower()
+                    if provider not in ['openai', 'ollama']:
+                        return jsonify({'error': f'LLM provider must be "openai" or "ollama", got "{provider}"'}), 400
+
+        # Prepare response
+        response_data = {
+            'success': True,
+            'changes_made': changes_made,
+            'requires_restart': requires_restart,
+            'warnings': warnings
+        }
+
+        if requires_restart:
+            response_data['message'] = 'LLM configuration updated. System restart required for changes to take effect.'
+        elif changes_made:
+            response_data['message'] = 'LLM configuration updated successfully.'
+        else:
+            response_data['message'] = 'No changes were made to the LLM configuration.'
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/llm/ollama/models', methods=['GET'])
+def api_get_ollama_models():
+    """Get available models from Ollama instance.
+
+    Query Parameters:
+        base_url (str, optional): Ollama server base URL (default: http://localhost:11434)
+
+    Returns:
+        JSON with success status and models array containing model information:
+        - success (bool): Whether the operation succeeded
+        - models (list): Array of model objects with name, size, digest, modified_at, details
+        - count (int): Number of models available
+        - base_url (str): The Ollama server URL used
+        - cached (bool): Whether the response was served from cache
+    """
+    try:
+        base_url = request.args.get('base_url', 'http://localhost:11434').rstrip('/')
+        cache_key = base_url  # Use base_url as cache key for different instances
+        
+        # Check cache first
+        current_time = datetime.now(timezone.utc)
+        cache_data = ollama_models_cache.get('data')
+        cache_timestamp = ollama_models_cache.get('timestamp')
+        cache_base_url = ollama_models_cache.get('base_url')
+        
+        if (cache_data and cache_timestamp and cache_base_url == base_url and
+            (current_time - cache_timestamp).total_seconds() < ollama_models_cache['ttl']):
+            print(f"🎯 LLM API: Serving Ollama models from cache (age: {(current_time - cache_timestamp).total_seconds():.1f}s)")
+            return jsonify({
+                'success': True,
+                'models': cache_data,
+                'count': len(cache_data),
+                'base_url': base_url,
+                'cached': True,
+                'cache_age_seconds': (current_time - cache_timestamp).total_seconds()
+            })
+
+        print(f"🦙 LLM API: Fetching available models from Ollama at {base_url}")
+        
+        # Make request to Ollama /api/tags endpoint
+        ollama_url = f"{base_url}/api/tags"
+        
+        try:
+            response = requests.get(ollama_url, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            return jsonify({
+                'success': False,
+                'error': f'Unable to connect to Ollama server at {base_url}',
+                'message': 'Please ensure Ollama is running and accessible',
+                'base_url': base_url
+            }), 503
+        except requests.exceptions.Timeout:
+            return jsonify({
+                'success': False,
+                'error': f'Timeout connecting to Ollama server at {base_url}',
+                'message': 'Ollama server did not respond within 10 seconds',
+                'base_url': base_url
+            }), 504
+        except requests.exceptions.HTTPError as e:
+            return jsonify({
+                'success': False,
+                'error': f'HTTP error from Ollama server: {e.response.status_code}',
+                'message': f'Ollama server returned an error: {e.response.text}',
+                'base_url': base_url
+            }), 502
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Unexpected error connecting to Ollama: {str(e)}',
+                'base_url': base_url
+            }), 500
+
+        # Parse Ollama response
+        try:
+            ollama_data = response.json()
+        except json.JSONDecodeError:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON response from Ollama server',
+                'message': 'Ollama server returned malformed JSON',
+                'base_url': base_url
+            }), 502
+
+        # Transform Ollama response to expected format
+        models = []
+        ollama_models = ollama_data.get('models', [])
+        
+        for model in ollama_models:
+            # Extract model information and transform to frontend format
+            transformed_model = {
+                'name': model.get('name', 'unknown'),
+                'size': model.get('size', 0),
+                'digest': model.get('digest', ''),
+                'modified_at': model.get('modified_at', ''),
+                'details': model.get('details', {})
+            }
+            
+            # Ensure details is a dictionary and has expected fields
+            if not isinstance(transformed_model['details'], dict):
+                transformed_model['details'] = {}
+            
+            # Add additional computed fields for frontend convenience
+            transformed_model['size_gb'] = round(transformed_model['size'] / (1024**3), 2) if transformed_model['size'] > 0 else 0
+            transformed_model['family'] = transformed_model['details'].get('family', 'unknown')
+            transformed_model['parameter_size'] = transformed_model['details'].get('parameter_size', 'unknown')
+            
+            models.append(transformed_model)
+
+        # Update cache
+        ollama_models_cache.update({
+            'data': models,
+            'timestamp': current_time,
+            'base_url': base_url
+        })
+
+        print(f"🦙 LLM API: Found {len(models)} models, cached for {ollama_models_cache['ttl']} seconds")
+
+        return jsonify({
+            'success': True,
+            'models': models,
+            'count': len(models),
+            'base_url': base_url,
+            'cached': False,
+            'cache_ttl_seconds': ollama_models_cache['ttl']
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'message': 'Internal server error while fetching Ollama models'
+        }), 500
+
+# =============================================================================
+# PERFORMANCE APIs - Performance monitoring and optimization
+# =============================================================================
+
+@app.route('/api/performance/metrics', methods=['GET'])
+def api_get_performance_metrics():
+    """Get current performance metrics and cache statistics.
+
+    Returns:
+        JSON with performance metrics, cache statistics, and optimization status
+    """
+    try:
+        optimizer = get_performance_optimizer()
+
+        if not optimizer:
+            return jsonify({
+                'success': False,
+                'error': 'Performance optimizer not initialized',
+                'optimization_enabled': app_config["performance"]["optimization_enabled"],
+                'cache_enabled': app_config["performance"]["cache_enabled"]
+            }), 500
+
+        metrics = optimizer.get_performance_metrics()
+
+        return jsonify({
+            'success': True,
+            'performance_metrics': metrics,
+            'configuration': {
+                'optimization_enabled': app_config["performance"]["optimization_enabled"],
+                'cache_enabled': app_config["performance"]["cache_enabled"],
+                'batch_processing_enabled': app_config["performance"]["batch_processing_enabled"],
+                'cache_default_ttl': app_config["performance"]["cache_default_ttl"]
+            },
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/performance/cache/clear', methods=['POST'])
+def api_clear_performance_cache():
+    """Clear performance cache entries.
+
+    Body (optional):
+        pattern (str): Cache pattern to clear (for hash-based cache)
+        operation_type (str): Operation type to clear (for semantic cache)
+                             Options: query_optimization, memory_relevance, context_analysis,
+                                     memory_grounding, extraction_evaluation, conversation, answer_generation
+        If neither provided, clears all cache entries
+
+    Returns:
+        JSON with clearing results
+    """
+    try:
+        optimizer = get_performance_optimizer()
+
+        if not optimizer:
+            return jsonify({
+                'success': False,
+                'error': 'Performance optimizer not initialized'
+            }), 500
+
+        data = request.get_json() or {}
+        pattern = data.get('pattern')
+        operation_type = data.get('operation_type')
+
+        result = optimizer.clear_cache(pattern=pattern, operation_type=operation_type)
+
+        return jsonify({
+            'success': True,
+            **result,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/performance/cache/analyze', methods=['GET'])
+def api_analyze_cache_effectiveness():
+    """Analyze cache effectiveness and provide optimization recommendations.
+
+    Returns:
+        JSON with cache analysis and recommendations
+    """
+    try:
+        optimizer = get_performance_optimizer()
+
+        if not optimizer:
+            return jsonify({
+                'success': False,
+                'error': 'Performance optimizer not initialized'
+            }), 500
+
+        analysis = optimizer.analyze_cache_effectiveness()
+
+        return jsonify({
+            'success': True,
+            'cache_analysis': analysis,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 
 # =============================================================================
@@ -1640,6 +2087,58 @@ def api_update_config():
                         app_config['web_server'][key] = new_value
                         changes_made.append(f"web_server.{key}: {old_value} → {new_value}")
                         warnings.append(f"Web server {key} change requires application restart to take effect")
+
+        # Update Performance configuration
+        if 'performance' in data:
+            perf_config = data['performance']
+
+            for key in ['cache_enabled', 'optimization_enabled', 'batch_processing_enabled', 'use_semantic_cache']:
+                if key in perf_config:
+                    old_value = app_config['performance'].get(key)
+                    new_value = bool(perf_config[key])
+
+                    if old_value != new_value:
+                        app_config['performance'][key] = new_value
+                        changes_made.append(f"performance.{key}: {old_value} → {new_value}")
+                        if key in ['optimization_enabled', 'cache_enabled', 'use_semantic_cache']:
+                            requires_restart = True
+
+            for key in ['cache_default_ttl']:
+                if key in perf_config:
+                    try:
+                        old_value = app_config['performance'].get(key)
+                        new_value = int(perf_config[key])
+
+                        if old_value != new_value:
+                            app_config['performance'][key] = new_value
+                            changes_made.append(f"performance.{key}: {old_value} → {new_value}")
+                    except (ValueError, TypeError):
+                        return jsonify({'error': f'Performance {key} must be an integer'}), 400
+
+            if 'semantic_similarity_threshold' in perf_config:
+                try:
+                    old_value = app_config['performance'].get('semantic_similarity_threshold')
+                    new_value = float(perf_config['semantic_similarity_threshold'])
+
+                    if old_value != new_value:
+                        app_config['performance']['semantic_similarity_threshold'] = new_value
+                        changes_made.append(f"performance.semantic_similarity_threshold: {old_value} → {new_value}")
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'Performance semantic_similarity_threshold must be a float'}), 400
+
+            if 'cache_ttl_settings' in perf_config:
+                ttl_settings = perf_config['cache_ttl_settings']
+                if isinstance(ttl_settings, dict):
+                    for ttl_key, ttl_value in ttl_settings.items():
+                        try:
+                            old_value = app_config['performance']['cache_ttl_settings'].get(ttl_key)
+                            new_value = int(ttl_value)
+
+                            if old_value != new_value:
+                                app_config['performance']['cache_ttl_settings'][ttl_key] = new_value
+                                changes_made.append(f"performance.cache_ttl_settings.{ttl_key}: {old_value} → {new_value}")
+                        except (ValueError, TypeError):
+                            return jsonify({'error': f'Performance cache TTL {ttl_key} must be an integer'}), 400
 
         # Prepare response
         response_data = {

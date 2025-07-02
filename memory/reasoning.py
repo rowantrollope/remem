@@ -79,41 +79,34 @@ class MemoryReasoning:
                 "supporting_memories": []
             }
 
-        # Filter memories for relevance using LLM as judge
-        relevant_memories = self.memory_processing.filter_relevant_memories(question, memories)
+        # Send all memories to LLM for inline relevance evaluation (no pre-filtering)
+        relevant_memories = memories
+        print(f"🧠 REASONING: Sending {len(memories)} memories directly to LLM for inline relevance evaluation")
 
-        if not relevant_memories:
-            return {
-                "type": "answer",
-                "answer": "I found some memories but none of them contain information relevant to your question.",
-                "confidence": "low",
-                "supporting_memories": [],
-                "filtered_count": len(memories)
-            }
-
-        # Prepare context from relevant memories
+        # Prepare context from all memories (let LLM evaluate relevance)
         memory_context = []
         for i, memory in enumerate(relevant_memories, 1):
             score_percent = memory["score"] * 100
-            relevance_note = f" (Relevance: {memory.get('relevance_reasoning', 'N/A')})" if memory.get('relevance_reasoning') else ""
             memory_context.append(
-                f"Memory {i} ({score_percent:.1f}% similarity, from {memory['formatted_time']}): {memory['text']}{relevance_note}"
+                f"Memory {i} (Similarity: {score_percent:.1f}%, from {memory['formatted_time']}):\n{memory['text']}\n"
             )
 
         context_text = "\n".join(memory_context)
 
         # Create enhanced system prompt for comprehensive memory-based assistance
-        system_prompt = """You are an expert personal memory assistant with access to comprehensive user profile information. Your job is to provide helpful, personalized answers based on the user's stored memories while being accurate about what you know and don't know.
+        system_prompt = """You are an expert personal memory assistant with access to potentially relevant user memories. Your job is to provide helpful, personalized answers based on the user's stored memories while being accurate about what you know and don't know.
 
 CORE MISSION:
-Provide personalized, helpful assistance by leveraging the user's stored memories to understand their preferences, context, constraints, and needs. Use this information to give tailored advice and answers.
+Provide personalized, helpful assistance by leveraging ONLY the relevant memories from the user's stored information to understand their preferences, context, constraints, and needs. Use this information to give tailored advice and answers.
 
 CRITICAL INSTRUCTIONS:
-1. Use ALL relevant information from the memories to provide personalized assistance
-2. When memories contain relevant information, use it to give specific, tailored advice
-3. If memories don't contain sufficient information, be honest about what's missing
-4. Consider the user's preferences, constraints, and context when formulating answers
-5. Connect related memories to provide comprehensive, personalized responses
+1. EVALUATE each memory for relevance to the current question - ignore memories that don't relate
+2. Use ONLY relevant memories to provide personalized assistance  
+3. When relevant memories contain information, use it to give specific, tailored advice
+4. If no memories are relevant or contain sufficient information, be honest about what's missing
+5. Consider the user's preferences, constraints, and context from relevant memories when formulating answers
+6. Connect related relevant memories to provide comprehensive, personalized responses
+7. Do not reference or use memories that are clearly not related to the current question
 
 Your task is to analyze the provided memories and respond with a JSON object containing:
 1. "answer": A helpful, personalized answer that leverages relevant memory information, or explanation of what information is needed
@@ -121,9 +114,9 @@ Your task is to analyze the provided memories and respond with a JSON object con
 3. "reasoning": Detailed explanation of how you used the memories and why you chose this confidence level
 
 ENHANCED Confidence levels:
-- "high": Memories contain comprehensive, relevant information that enables a highly personalized and complete answer
-- "medium": Memories contain some relevant information that enables a partially personalized answer, but some details may be missing
-- "low": Memories contain limited relevant information, requiring a more general answer or indicating what information is needed
+- "high": Multiple relevant memories contain comprehensive information that enables a highly personalized and complete answer
+- "medium": Some relevant memories contain useful information that enables a partially personalized answer, but some details may be missing  
+- "low": Few or no relevant memories found, requiring a more general answer or indicating what information is needed
 
 PERSONALIZATION APPROACH:
 - Use family information to tailor recommendations (family size, ages, dietary needs)
@@ -144,10 +137,10 @@ Be helpful and personalized while being honest about the limits of available inf
         # Use the original question in the prompt to maintain user context
         user_prompt = f"""Question: {question}
 
-Available user memories (already filtered for relevance):
+Available user memories (may contain both relevant and irrelevant entries):
 {context_text}
 
-Please provide a helpful, personalized answer using the relevant information from these memories. Consider the user's preferences, constraints, family situation, past experiences, and other personal context when formulating your response. If the memories don't contain sufficient information for a complete answer, explain what additional information would be helpful and provide what guidance you can based on what you know about the user."""
+Please evaluate each memory for relevance to the current question. Use ONLY the relevant memories to provide a helpful, personalized answer. Ignore any memories that don't relate to the user's current question. Consider the user's preferences, constraints, family situation, past experiences, and other personal context from the relevant memories when formulating your response. If the relevant memories don't contain sufficient information for a complete answer, explain what additional information would be helpful and provide what guidance you can based on what you know about the user."""
 
         try:
             # Use Tier 1 LLM for main question answering
