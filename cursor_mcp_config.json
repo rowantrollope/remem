@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "memory-agent": {
+      "command": "python",
+      "args": ["start_mcp_server.py", "stdio"],
+      "cwd": ".",
+      "env": {
+        "OPENAI_API_KEY": ""
+      }
+    }
+  }
+}

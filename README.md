@@ -6,7 +6,7 @@ Intelligent memory storage, retrieval, and analysis using Redis VectorSet and Op
 
 ## 🎯 Entry Points & Quick Start
 
-This project provides **three main interfaces** for different use cases:
+This project provides **four main interfaces** for different use cases:
 
 ### 1. **CLI Interface** - Interactive Memory Operations
 ```bash
@@ -34,7 +34,20 @@ agent = LangGraphMemoryAgent()
 response = agent.run("What restaurants have I been to?")
 ```
 
-### 🚀 Quick Setup (5 minutes)
+### 4. **MCP Server** - Model Context Protocol for Cursor & AI Tools 🆕
+```bash
+# Setup and connect to Cursor
+./setup_mcp.sh
+# Follow MCP_SETUP.md for Cursor integration
+```
+
+The MCP server provides memory capabilities directly to AI assistants like Cursor, enabling them to:
+- 🧠 Store and retrieve memories with contextual grounding
+- 🔍 Search memories using semantic similarity
+- 🤖 Answer questions with confidence analysis
+- 📚 Manage conversation context and extract insights
+
+## 🚀 Quick Setup (5 minutes)
 
 1. **Start Redis 8:**
    ```bash
@@ -56,9 +69,11 @@ response = agent.run("What restaurants have I been to?")
    - CLI: `python main.py`
    - Web: `python web_app.py` → visit http://localhost:5001
    - Programmatic: Import `LangGraphMemoryAgent` in your code
+   - **MCP Server**: `./setup_mcp.sh` then follow `MCP_SETUP.md`
 
 ## 🧠 Features
 
+- **MCP Server Integration**: Direct memory capabilities for Cursor and other AI tools
 - **LangGraph Workflow**: Intelligent tool orchestration for complex memory operations
 - **Vector Memory Storage**: Semantic similarity search using Redis VectorSet API
 - **Contextual Grounding**: Automatic resolution of relative time/location references
