@@ -9,16 +9,30 @@ import json
 import uuid
 import requests
 from datetime import datetime, timezone
-from typing import Dict, Any
-from flask import Flask, render_template, request, jsonify
-from flask_cors import CORS
+from typing import Dict, Any, Optional, List
+from fastapi import FastAPI, HTTPException, Query, Path, Body
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
 from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager, get_llm_manager
 from optimizations.performance_optimizer import init_performance_optimizer, get_performance_optimizer, optimize_memory_agent
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+app = FastAPI(
+    title="Memory Agent API",
+    description="REST API for Memory Agent with LangGraph integration",
+    version="1.0.0"
+)
+
+# Enable CORS for all routes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure as needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize the memory agent and OpenAI client
 memory_agent = None
@@ -112,6 +126,78 @@ app_config = {
         }
     }
 }
+
+# =============================================================================
+# PYDANTIC MODELS - Request/Response validation models
+# =============================================================================
+
+class MemoryStoreRequest(BaseModel):
+    text: str = Field(..., description="Memory text to store")
+    apply_grounding: bool = Field(True, description="Whether to apply contextual grounding")
+    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to use")
+
+class MemorySearchRequest(BaseModel):
+    query: str = Field(..., description="Search query text")
+    top_k: int = Field(5, ge=1, description="Number of results to return")
+    filter: Optional[str] = Field(None, description="Filter expression for Redis VSIM command")
+    optimize_query: bool = Field(False, description="Whether to optimize query for embedding search")
+    min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
+    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to search")
+
+class MemoryDeleteRequest(BaseModel):
+    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to delete from")
+
+class ContextSetRequest(BaseModel):
+    location: Optional[str] = Field(None, description="Current location")
+    activity: Optional[str] = Field(None, description="Current activity")
+    people_present: Optional[List[str]] = Field(None, description="List of people present")
+
+class KLineRecallRequest(BaseModel):
+    query: str = Field(..., description="Query to construct mental state around")
+    top_k: int = Field(5, ge=1, description="Number of memories to include")
+    filter: Optional[str] = Field(None, description="Filter expression for Redis VSIM command")
+    use_llm_filtering: bool = Field(False, description="Apply LLM-based relevance filtering")
+    min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
+    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to search")
+
+class KLineAnswerRequest(BaseModel):
+    question: str = Field(..., description="Question to answer")
+    top_k: int = Field(5, ge=1, description="Number of memories to retrieve for context")
+    filter: Optional[str] = Field(None, description="Filter expression for Redis VSIM command")
+    min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
+
+class AgentChatRequest(BaseModel):
+    message: str = Field(..., description="User message/question")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt to override default behavior")
+
+class AgentSessionCreateRequest(BaseModel):
+    system_prompt: str = Field(..., description="Custom system prompt for the agent session")
+    session_id: Optional[str] = Field(None, description="Custom session ID, auto-generated if not provided")
+    config: Optional[Dict[str, Any]] = Field(None, description="Additional configuration options")
+
+class AgentSessionMessageRequest(BaseModel):
+    message: str = Field(..., description="The user's message")
+    stream: bool = Field(False, description="Whether to stream the response")
+    store_memory: bool = Field(True, description="Whether to extract and store memories from this conversation")
+    top_k: int = Field(10, ge=1, description="Number of memories to search and return")
+    min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
+
+class LLMConfigTier(BaseModel):
+    provider: str = Field(..., description="LLM provider: 'openai' or 'ollama'")
+    model: str = Field(..., description="Model name")
+    temperature: float = Field(0.7, ge=0.0, le=2.0, description="Response creativity")
+    max_tokens: int = Field(1000, ge=1, description="Maximum response length")
+    base_url: Optional[str] = Field(None, description="Base URL for Ollama")
+    api_key: Optional[str] = Field(None, description="API key")
+    timeout: int = Field(30, ge=1, description="Request timeout in seconds")
+
+class LLMConfigUpdate(BaseModel):
+    tier1: Optional[LLMConfigTier] = None
+    tier2: Optional[LLMConfigTier] = None
+
+class CacheClearRequest(BaseModel):
+    pattern: Optional[str] = Field(None, description="Cache pattern to clear")
+    operation_type: Optional[str] = Field(None, description="Operation type to clear")
 
 def init_llm_manager():
     """Initialize the LLM manager with current configuration."""
@@ -218,18 +304,13 @@ def init_memory_agent():
 # - Context management for grounding operations
 # =============================================================================
 
-@app.route('/api/memory', methods=['POST'])
-def api_store_neme():
+@app.post('/api/memory')
+async def api_store_neme(request: MemoryStoreRequest):
     """Store a new atomic memory (Neme).
 
     In Minsky's framework, a Neme is a fundamental unit of memory - an atomic
     piece of knowledge that can be contextually grounded and later recalled
     by higher-level cognitive processes.
-
-    Body:
-        text (str): Memory text to store
-        apply_grounding (bool, optional): Whether to apply contextual grounding (default: true)
-        vectorstore_name (str, optional): Name of the vectorstore to use (default: configured default)
 
     Returns:
         JSON with success status, memory_id, message, and grounding information:
@@ -245,14 +326,12 @@ def api_store_neme():
         - context_snapshot (dict, optional): Context used for grounding if applied
     """
     try:
-        data = request.get_json()
-
-        memory_text = data.get('text', '').strip()
-        apply_grounding = data.get('apply_grounding', True)
-        vectorstore_name = data.get('vectorstore_name')
+        memory_text = request.text.strip()
+        apply_grounding = request.apply_grounding
+        vectorstore_name = request.vectorstore_name
 
         if not memory_text:
-            return jsonify({'error': 'Memory text is required'}), 400
+            raise HTTPException(status_code=400, detail='Memory text is required')
 
         print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
         if vectorstore_name:
@@ -260,7 +339,7 @@ def api_store_neme():
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         storage_result = memory_agent.memory_agent.store_memory(
             memory_text,
@@ -289,41 +368,33 @@ def api_store_neme():
         if 'context_snapshot' in storage_result:
             response_data['context_snapshot'] = storage_result['context_snapshot']
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory/search', methods=['POST'])
-def api_search_nemes():
+@app.post('/api/memory/search')
+async def api_search_nemes(request: MemorySearchRequest):
     """Search atomic memories (Nemes) using vector similarity.
 
     This performs direct vector similarity search across stored Nemes,
     returning the most relevant atomic memories for a given query.
 
-    Body:
-        query (str): Search query text
-        top_k (int, optional): Number of results to return (default: 5)
-        filter (str, optional): Filter expression for Redis VSIM command
-        optimize_query (bool, optional): Whether to optimize query for embedding search (default: false)
-        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
-        vectorstore_name (str, optional): Name of the vectorstore to search (default: configured default)
-
     Returns:
         JSON with success status, memories array, count, and memory breakdown by type
     """
     try:
-        data = request.get_json()
-
-        query = data.get('query', '').strip()
-        top_k = data.get('top_k', 5)
-        filter_expr = data.get('filter')
-        optimize_query = data.get('optimize_query', False)  # Optional query optimization
-        min_similarity = data.get('min_similarity', 0.7)  # Default to 0.7
-        vectorstore_name = data.get('vectorstore_name')
+        query = request.query.strip()
+        top_k = request.top_k
+        filter_expr = request.filter
+        optimize_query = request.optimize_query
+        min_similarity = request.min_similarity
+        vectorstore_name = request.vectorstore_name
 
         if not query:
-            return jsonify({'error': 'Query is required'}), 400
+            raise HTTPException(status_code=400, detail='Query is required')
 
         print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
         if vectorstore_name:
@@ -335,7 +406,7 @@ def api_search_nemes():
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         # Use the memory agent for search operations with optional optimization
         if optimize_query:
@@ -360,20 +431,22 @@ def api_search_nemes():
         print(f"🔍 NEME API: Search result type: {type(search_result)}")
         print(f"🔍 NEME API: Filtering info: {filtering_info}")
 
-        return jsonify({
+        return {
             'success': True,
             'query': query,
             'memories': memories,
             'count': len(memories),
             'filtering_info': filtering_info,
             'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory', methods=['GET'])
-def api_get_neme_info():
+@app.get('/api/memory')
+async def api_get_neme_info():
     """Get atomic memory (Neme) statistics and system information.
 
     Returns:
@@ -381,42 +454,41 @@ def api_get_neme_info():
     """
     try:
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         # Get comprehensive memory information from underlying agent
         memory_info = memory_agent.memory_agent.get_memory_info()
 
         if 'error' in memory_info:
-            return jsonify(memory_info), 500
+            raise HTTPException(status_code=500, detail=memory_info['error'])
 
-        return jsonify({
+        return {
             'success': True,
             **memory_info
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory/<memory_id>', methods=['DELETE'])
-def api_delete_neme(memory_id):
+@app.delete('/api/memory/{memory_id}')
+async def api_delete_neme(memory_id: str = Path(..., description="UUID of the memory to delete"), request: Optional[MemoryDeleteRequest] = None):
     """Delete a specific atomic memory (Neme) by ID.
 
-    Path Parameters:
-        memory_id (str): UUID of the memory to delete
-
-    Body (optional):
-        vectorstore_name (str, optional): Name of the vectorstore to delete from (default: configured default)
+    Args:
+        memory_id: UUID of the memory to delete
+        request: Optional request body with vectorstore_name
 
     Returns:
         JSON with success status and deletion details
     """
     try:
         if not memory_id or not memory_id.strip():
-            return jsonify({'error': 'Memory ID is required'}), 400
+            raise HTTPException(status_code=400, detail='Memory ID is required')
 
         # Get vectorstore_name from request body if provided
-        data = request.get_json() or {}
-        vectorstore_name = data.get('vectorstore_name')
+        vectorstore_name = request.vectorstore_name if request else None
 
         print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
         if vectorstore_name:
@@ -424,7 +496,7 @@ def api_delete_neme(memory_id):
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         success = memory_agent.memory_agent.delete_memory(
             memory_id.strip(),
@@ -432,35 +504,36 @@ def api_delete_neme(memory_id):
         )
 
         if success:
-            return jsonify({
+            return {
                 'success': True,
                 'message': f'Neme {memory_id} deleted successfully',
                 'memory_id': memory_id,
                 'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
-            })
+            }
         else:
-            return jsonify({
-                'success': False,
-                'error': f'Neme {memory_id} not found or could not be deleted'
-            }), 404
+            raise HTTPException(
+                status_code=404, 
+                detail=f'Neme {memory_id} not found or could not be deleted'
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory', methods=['DELETE'])
-def api_delete_all_nemes():
+@app.delete('/api/memory')
+async def api_delete_all_nemes(request: Optional[MemoryDeleteRequest] = None):
     """Clear all atomic memories (Nemes) from the system.
 
-    Body (optional):
-        vectorstore_name (str, optional): Name of the vectorstore to clear (default: configured default)
+    Args:
+        request: Optional request body with vectorstore_name
 
     Returns:
         JSON with success status, deletion count, and operation details
     """
     try:
         # Get vectorstore_name from request body if provided
-        data = request.get_json() or {}
-        vectorstore_name = data.get('vectorstore_name')
+        vectorstore_name = request.vectorstore_name if request else None
 
         print("🗑️ NEME API: Clearing all atomic memories...")
         if vectorstore_name:
@@ -468,58 +541,51 @@ def api_delete_all_nemes():
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         result = memory_agent.memory_agent.clear_all_memories(vectorset_key=vectorstore_name)
 
         if result['success']:
-            return jsonify({
+            return {
                 'success': True,
                 'message': result['message'],
                 'memories_deleted': result['memories_deleted'],
                 'vectorset_existed': result['vectorset_existed'],
                 'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
-            })
+            }
         else:
-            return jsonify({
-                'success': False,
-                'error': result['error'],
-                'memories_deleted': result.get('memories_deleted', 0),
-                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail=result['error']
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory/context', methods=['POST'])
-def api_set_neme_context():
+@app.post('/api/memory/context')
+async def api_set_neme_context(request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
     """Set current context for memory grounding.
 
-    Body:
-        location (str, optional): Current location
-        activity (str, optional): Current activity
-        people_present (list, optional): List of people present
-        Additional fields will be stored as environment context
+    Args:
+        request: Context parameters (location, activity, people_present)
+        additional_context: Additional fields will be stored as environment context
 
     Returns:
         JSON with success status and updated context
     """
     try:
-        data = request.get_json()
-
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         # Extract context parameters
-        location = data.get('location')
-        activity = data.get('activity')
-        people_present = data.get('people_present', [])
+        location = request.location
+        activity = request.activity
+        people_present = request.people_present or []
 
-        # Extract additional environment context
-        environment_context = {}
-        for key, value in data.items():
-            if key not in ['location', 'activity', 'people_present']:
-                environment_context[key] = value
+        # Use additional_context for environment context
+        environment_context = additional_context
 
         print(f"🌍 NEME API: Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
 
@@ -531,7 +597,7 @@ def api_set_neme_context():
             **environment_context
         )
 
-        return jsonify({
+        return {
             'success': True,
             'message': 'Context updated successfully',
             'context': {
@@ -540,13 +606,15 @@ def api_set_neme_context():
                 'people_present': people_present,
                 'environment': environment_context
             }
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/memory/context', methods=['GET'])
-def api_get_neme_context():
+@app.get('/api/memory/context')
+async def api_get_neme_context():
     """Get current context information for memory grounding.
 
     Returns:
@@ -554,17 +622,19 @@ def api_get_neme_context():
     """
     try:
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         current_context = memory_agent.memory_agent.core._get_current_context()
 
-        return jsonify({
+        return {
             'success': True,
             'context': current_context
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =============================================================================
 # K-LINE API - Reflective Operations (Inspired by Minsky's "K-lines")
@@ -582,37 +652,27 @@ def api_get_neme_context():
 # - Advanced cognitive operations that combine multiple Nemes
 # =============================================================================
 
-@app.route('/api/klines/recall', methods=['POST'])
-def api_kline_recall():
+@app.post('/api/klines/recall')
+async def api_kline_recall(request: KLineRecallRequest):
     """Construct a mental state (K-line) by recalling relevant memories.
 
     This operation searches for and filters relevant Nemes to construct
     a coherent mental state for a specific query or context. The result
     is a formatted collection of memories that can be used for reasoning.
 
-    Body:
-        query (str): Query to construct mental state around
-        top_k (int, optional): Number of memories to include (default: 5)
-        filter (str, optional): Filter expression for Redis VSIM command
-        use_llm_filtering (bool, optional): Apply LLM-based relevance filtering (default: true)
-        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
-        vectorstore_name (str, optional): Name of the vectorstore to search (default: configured default)
-
     Returns:
         JSON with formatted mental state, supporting memories, and memory breakdown by type
     """
     try:
-        data = request.get_json()
-
-        query = data.get('query', '').strip()
-        top_k = data.get('top_k', 5)
-        filter_expr = data.get('filter')
-        use_llm_filtering = data.get('use_llm_filtering', False)
-        min_similarity = data.get('min_similarity', 0.7)
-        vectorstore_name = data.get('vectorstore_name')
+        query = request.query.strip()
+        top_k = request.top_k
+        filter_expr = request.filter
+        use_llm_filtering = request.use_llm_filtering
+        min_similarity = request.min_similarity
+        vectorstore_name = request.vectorstore_name
 
         if not query:
-            return jsonify({'error': 'Query is required'}), 400
+            raise HTTPException(status_code=400, detail='Query is required')
 
         print(f"🧠 K-LINE API: Constructing mental state for: {query} (top_k: {top_k})")
         if vectorstore_name:
@@ -624,7 +684,7 @@ def api_kline_recall():
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
         # Search for relevant memories with embedding optimization
         validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
@@ -686,13 +746,15 @@ def api_kline_recall():
                 response_data['original_memory_count'] = original_count
                 response_data['filtered_memory_count'] = filtered_count
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/klines/ask', methods=['POST'])
-def api_kline_answer():
+@app.post('/api/klines/ask')
+async def api_kline_answer(request: KLineAnswerRequest):
     """Answer a question using K-line construction and reasoning.
 
     This operation constructs a mental state from relevant Nemes and applies
@@ -701,29 +763,21 @@ def api_kline_answer():
 
     K-lines are constructed but NOT stored - they exist only as temporary mental states.
 
-    Body:
-        question (str): Question to answer
-        top_k (int, optional): Number of memories to retrieve for context (default: 5)
-        filter (str, optional): Filter expression for Redis VSIM command
-        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
-
     Returns:
         JSON with structured response including answer, confidence, reasoning, supporting memories,
         and the constructed mental state (K-line)
     """
     try:
-        data = request.get_json()
-
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        question = data.get('question', '').strip()
-        top_k = data.get('top_k', 5)
-        filter_expr = data.get('filter')
-        min_similarity = data.get('min_similarity', 0.7)
+        question = request.question.strip()
+        top_k = request.top_k
+        filter_expr = request.filter
+        min_similarity = request.min_similarity
 
         if not question:
-            return jsonify({'error': 'Question is required'}), 400
+            raise HTTPException(status_code=400, detail='Question is required')
 
         print(f"🤔 K-LINE API: Answering question via mental state construction: {question} (top_k: {top_k})")
         if filter_expr:
@@ -759,10 +813,12 @@ def api_kline_answer():
             'kline': kline_result  # Include the constructed mental state
         }
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -781,8 +837,8 @@ def api_kline_answer():
 # - Integration of memory operations with language generation
 # =============================================================================
 
-@app.route('/api/agent/chat', methods=['POST'])
-def api_agent_chat():
+@app.post('/api/agent/chat')
+async def api_agent_chat(request: AgentChatRequest):
     """Full conversational agent with integrated memory architecture.
 
     This endpoint orchestrates the complete cognitive architecture:
@@ -791,24 +847,18 @@ def api_agent_chat():
     - Applies sophisticated reasoning and language generation
     - Optionally extracts new memories from the conversation
 
-    Body:
-        message (str): User message/question
-        system_prompt (str, optional): Custom system prompt to override default behavior
-
     Returns:
         JSON with success status, original message, and agent response
     """
     try:
-        data = request.get_json()
-
         if not memory_agent:
-            return jsonify({'error': 'Memory agent not initialized'}), 500
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        message = data.get('message', '').strip()
-        system_prompt = data.get('system_prompt', '').strip()
+        message = request.message.strip()
+        system_prompt = request.system_prompt.strip() if request.system_prompt else None
 
         if not message:
-            return jsonify({'error': 'Message is required'}), 400
+            raise HTTPException(status_code=400, detail='Message is required')
 
         print(f"💬 AGENT API: Processing chat message - '{message}'")
         if system_prompt:
@@ -817,15 +867,17 @@ def api_agent_chat():
         # Use the LangGraph agent's run method with optional custom system prompt
         response = memory_agent.run(message, system_prompt=system_prompt if system_prompt else None)
 
-        return jsonify({
+        return {
             'success': True,
             'message': message,
             'response': response,
             'system_prompt_used': bool(system_prompt)
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -835,31 +887,20 @@ def api_agent_chat():
 # CHAT APIs - General purpose chat interface
 # =============================================================================
 
-@app.route('/api/agent/session', methods=['POST'])
-def api_create_agent_session():
+@app.post('/api/agent/session')
+async def api_create_agent_session(request: AgentSessionCreateRequest):
     """Create a new agent session with integrated memory capabilities.
-
-    Body:
-        system_prompt (str): Custom system prompt for the agent session
-        session_id (str, optional): Custom session ID, auto-generated if not provided
-        config (dict, optional): Additional configuration options
-            - use_memory (bool, optional): Whether to enable memory features (default: true)
-            - model (str, optional): OpenAI model to use (default: gpt-3.5-turbo)
-            - temperature (float, optional): Response creativity (default: 0.7)
-            - max_tokens (int, optional): Maximum response length (default: 1000)
 
     Returns:
         JSON with session_id and confirmation
     """
     try:
-        data = request.get_json()
-
-        system_prompt = data.get('system_prompt', '').strip()
+        system_prompt = request.system_prompt.strip()
         if not system_prompt:
-            return jsonify({'error': 'system_prompt is required'}), 400
+            raise HTTPException(status_code=400, detail='system_prompt is required')
 
-        session_id = data.get('session_id', str(uuid.uuid4()))
-        config = data.get('config', {})
+        session_id = request.session_id or str(uuid.uuid4())
+        config = request.config or {}
 
         # Extract memory configuration with default to true for agent sessions
         use_memory = config.get('use_memory', True)
@@ -891,19 +932,21 @@ def api_create_agent_session():
         memory_status = "enabled" if use_memory else "disabled"
         print(f"🆕 AGENT API: Created agent session {session_id} (memory: {memory_status})")
 
-        return jsonify({
+        return {
             'success': True,
             'session_id': session_id,
             'system_prompt': system_prompt,
             'use_memory': use_memory,
             'created_at': session_data['created_at']
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/agent/session/<session_id>', methods=['POST'])
-def api_agent_session_message(session_id):
+@app.post('/api/agent/session/{session_id}')
+async def api_agent_session_message(session_id: str = Path(..., description="The agent session ID"), request: AgentSessionMessageRequest = Body(...)):
     """Send a message to an agent session with full cognitive architecture.
 
     This endpoint provides the complete agent experience:
@@ -914,40 +957,32 @@ def api_agent_session_message(session_id):
 
     Args:
         session_id: The agent session ID
-
-    Body:
-        message (str): The user's message
-        stream (bool, optional): Whether to stream the response (default: False)
-        store_memory (bool, optional): Whether to extract and store memories from this conversation (default: True for memory-enabled sessions)
-        top_k (int, optional): Number of memories to search and return (default: 10)
-        min_similarity (float, optional): Minimum similarity score threshold (0.0-1.0, default: 0.7)
+        request: Request body with message and options
 
     Returns:
         JSON with the assistant's response and conversation context.
         For memory-enabled sessions, includes 'memory_context' with relevant memories used in the response.
     """
     try:
-        data = request.get_json()
-
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
-            return jsonify({'error': 'Agent session not found'}), 404
+            raise HTTPException(status_code=404, detail='Agent session not found')
 
-        message = data.get('message', '').strip()
+        message = request.message.strip()
         if not message:
-            return jsonify({'error': 'message is required'}), 400
+            raise HTTPException(status_code=400, detail='message is required')
 
-        stream = data.get('stream', False)
-        store_memory = data.get('store_memory', True)  # Default to True for backward compatibility
-        top_k = data.get('top_k', 10)  # Default to 10 memories
-        min_similarity = data.get('min_similarity', 0.7)  # Default to 0.7
+        stream = request.stream
+        store_memory = request.store_memory
+        top_k = request.top_k
+        min_similarity = request.min_similarity
 
         # Validate top_k parameter
         if not isinstance(top_k, int) or top_k < 1:
-            return jsonify({'error': 'top_k must be a positive integer'}), 400
+            raise HTTPException(status_code=400, detail='top_k must be a positive integer')
 
         # Validate min_similarity parameter
         if not isinstance(min_similarity, (int, float)) or min_similarity < 0.0 or min_similarity > 1.0:
-            return jsonify({'error': 'min_similarity must be a number between 0.0 and 1.0'}), 400
+            raise HTTPException(status_code=400, detail='min_similarity must be a number between 0.0 and 1.0')
 
         session = app.chat_sessions[session_id]
         use_memory = session.get('use_memory', False)
@@ -971,8 +1006,10 @@ def api_agent_session_message(session_id):
         else:
             return _handle_standard_message(session_id, session, stream)
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _handle_standard_message(session_id, session, stream):
@@ -1002,11 +1039,11 @@ def _handle_standard_message(session_id, session, stream):
 
         if stream:
             # TODO: Implement streaming response
-            return jsonify({'error': 'Streaming not yet implemented'}), 501
+            raise HTTPException(status_code=501, detail='Streaming not yet implemented')
 
         assistant_response = response['content']
     except Exception as e:
-        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
 
     # Add assistant response to session
     assistant_message = {
@@ -1017,19 +1054,19 @@ def _handle_standard_message(session_id, session, stream):
     session['messages'].append(assistant_message)
     session['last_activity'] = datetime.now(timezone.utc).isoformat()
 
-    return jsonify({
+    return {
         'success': True,
         'session_id': session_id,
         'message': assistant_response,
         'conversation_length': len(session['messages']),
         'timestamp': assistant_message['timestamp']
-    })
+    }
 
 
 def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True, top_k=10, min_similarity=0.9):
     """Handle message processing for sessions with memory enabled."""
     if not memory_agent:
-        return jsonify({'error': 'Memory agent not initialized but session requires memory'}), 500
+        raise HTTPException(status_code=500, detail='Memory agent not initialized but session requires memory')
 
     # Add to conversation buffer for memory extraction
     if 'conversation_buffer' not in session:
@@ -1126,11 +1163,11 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
 
         if stream:
             # TODO: Implement streaming response
-            return jsonify({'error': 'Streaming not yet implemented'}), 501
+            raise HTTPException(status_code=501, detail='Streaming not yet implemented')
 
         assistant_response = response['content']
     except Exception as e:
-        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
 
     # Add assistant response to session and buffer
     assistant_message = {
@@ -1164,7 +1201,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
             'filtering_info': filtering_info if 'filtering_info' in locals() else None
         }
     print(f"7) memories_used: {len(relevant_memories)}")
-    return jsonify(response_data)
+    return response_data
 
 
 def _check_and_extract_memories(session_id, session):
@@ -1302,8 +1339,8 @@ def _contains_extractable_info_fallback(messages):
     conversation_text = ' '.join([msg['content'] for msg in messages]).lower()
     return any(keyword in conversation_text for keyword in extractable_keywords)
 
-@app.route('/api/agent/session/<session_id>', methods=['GET'])
-def api_get_agent_session(session_id):
+@app.get('/api/agent/session/{session_id}')
+async def api_get_agent_session(session_id: str = Path(..., description="The agent session ID")):
     """Get agent session information and conversation history.
 
     Args:
@@ -1314,7 +1351,7 @@ def api_get_agent_session(session_id):
     """
     try:
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
-            return jsonify({'error': 'Agent session not found'}), 404
+            raise HTTPException(status_code=404, detail='Agent session not found')
 
         session = app.chat_sessions[session_id]
 
@@ -1340,13 +1377,15 @@ def api_get_agent_session(session_id):
                 }
             })
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/agent/session/<session_id>', methods=['DELETE'])
-def api_delete_agent_session(session_id):
+@app.delete('/api/agent/session/{session_id}')
+async def api_delete_agent_session(session_id: str = Path(..., description="The agent session ID")):
     """Delete an agent session.
 
     Args:
@@ -1357,22 +1396,24 @@ def api_delete_agent_session(session_id):
     """
     try:
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
-            return jsonify({'error': 'Agent session not found'}), 404
+            raise HTTPException(status_code=404, detail='Agent session not found')
 
         del app.chat_sessions[session_id]
 
         print(f"🗑️ AGENT API: Deleted agent session {session_id}")
 
-        return jsonify({
+        return {
             'success': True,
             'message': f'Agent session {session_id} deleted'
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/agent/sessions', methods=['GET'])
-def api_list_agent_sessions():
+@app.get('/api/agent/sessions')
+async def api_list_agent_sessions():
     """List all active agent sessions.
 
     Returns:
@@ -1392,27 +1433,27 @@ def api_list_agent_sessions():
                 'system_prompt_preview': session['system_prompt'][:100] + '...' if len(session['system_prompt']) > 100 else session['system_prompt']
             })
 
-        return jsonify({
+        return {
             'success': True,
             'sessions': sessions,
             'total_sessions': len(sessions)
-        })
+        }
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =============================================================================
 # SYSTEM APIs - Health checks and status
 # =============================================================================
 
-@app.route('/api/health')
-def api_health():
+@app.get('/api/health')
+async def api_health():
     """System health check."""
-    return jsonify({
+    return {
         'status': 'healthy' if memory_agent else 'unhealthy',
         'service': 'LangGraph Memory Agent API',
         'timestamp': datetime.now(timezone.utc).isoformat()
-    })
+    }
 
 # =============================================================================
 # LLM APIs - LLM provider management and model information
@@ -1425,8 +1466,8 @@ ollama_models_cache = {
     'ttl': 45  # Cache for 45 seconds
 }
 
-@app.route('/api/llm/config', methods=['GET'])
-def api_get_llm_config():
+@app.get('/api/llm/config')
+async def api_get_llm_config():
     """Get current LLM configuration.
 
     Returns:
@@ -1458,32 +1499,27 @@ def api_get_llm_config():
         except Exception:
             runtime_info["llm_manager_initialized"] = False
 
-        return jsonify({
+        return {
             'success': True,
             'llm_config': safe_llm_config,
             'runtime': runtime_info
-        })
+        }
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/llm/config', methods=['PUT'])
-def api_update_llm_config():
+@app.put('/api/llm/config')
+async def api_update_llm_config(request: LLMConfigUpdate):
     """Update LLM configuration.
-
-    Body:
-        LLM configuration object:
-        - tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}
-        - tier2: {provider, model, temperature, max_tokens, base_url, api_key, timeout}
 
     Returns:
         JSON with success status, updated configuration, and any warnings
     """
     try:
-        data = request.get_json()
+        data = request.dict(exclude_unset=True)
 
         if not data:
-            return jsonify({'error': 'LLM configuration data is required'}), 400
+            raise HTTPException(status_code=400, detail='LLM configuration data is required')
 
         warnings = []
         changes_made = []
@@ -1532,13 +1568,13 @@ def api_update_llm_config():
                                 changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
                                 requires_restart = True
                         except (ValueError, TypeError):
-                            return jsonify({'error': f'LLM {tier}.{key} must be a number'}), 400
+                            raise HTTPException(status_code=400, detail=f'LLM {tier}.{key} must be a number')
 
                 # Validate provider
                 if 'provider' in tier_config:
                     provider = tier_config['provider'].lower()
                     if provider not in ['openai', 'ollama']:
-                        return jsonify({'error': f'LLM provider must be "openai" or "ollama", got "{provider}"'}), 400
+                        raise HTTPException(status_code=400, detail=f'LLM provider must be "openai" or "ollama", got "{provider}"')
 
         # Prepare response
         response_data = {
@@ -1555,17 +1591,19 @@ def api_update_llm_config():
         else:
             response_data['message'] = 'No changes were made to the LLM configuration.'
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/llm/ollama/models', methods=['GET'])
-def api_get_ollama_models():
+@app.get('/api/llm/ollama/models')
+async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', description="Ollama server base URL")):
     """Get available models from Ollama instance.
 
-    Query Parameters:
-        base_url (str, optional): Ollama server base URL (default: http://localhost:11434)
+    Args:
+        base_url: Ollama server base URL (default: http://localhost:11434)
 
     Returns:
         JSON with success status and models array containing model information:
@@ -1576,7 +1614,7 @@ def api_get_ollama_models():
         - cached (bool): Whether the response was served from cache
     """
     try:
-        base_url = request.args.get('base_url', 'http://localhost:11434').rstrip('/')
+        base_url = base_url.rstrip('/')
         cache_key = base_url  # Use base_url as cache key for different instances
         
         # Check cache first
@@ -1588,14 +1626,14 @@ def api_get_ollama_models():
         if (cache_data and cache_timestamp and cache_base_url == base_url and
             (current_time - cache_timestamp).total_seconds() < ollama_models_cache['ttl']):
             print(f"🎯 LLM API: Serving Ollama models from cache (age: {(current_time - cache_timestamp).total_seconds():.1f}s)")
-            return jsonify({
+            return {
                 'success': True,
                 'models': cache_data,
                 'count': len(cache_data),
                 'base_url': base_url,
                 'cached': True,
                 'cache_age_seconds': (current_time - cache_timestamp).total_seconds()
-            })
+            }
 
         print(f"🦙 LLM API: Fetching available models from Ollama at {base_url}")
         
@@ -1606,43 +1644,58 @@ def api_get_ollama_models():
             response = requests.get(ollama_url, timeout=10)
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            return jsonify({
-                'success': False,
-                'error': f'Unable to connect to Ollama server at {base_url}',
-                'message': 'Please ensure Ollama is running and accessible',
-                'base_url': base_url
-            }), 503
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    'success': False,
+                    'error': f'Unable to connect to Ollama server at {base_url}',
+                    'message': 'Please ensure Ollama is running and accessible',
+                    'base_url': base_url
+                }
+            )
         except requests.exceptions.Timeout:
-            return jsonify({
-                'success': False,
-                'error': f'Timeout connecting to Ollama server at {base_url}',
-                'message': 'Ollama server did not respond within 10 seconds',
-                'base_url': base_url
-            }), 504
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    'success': False,
+                    'error': f'Timeout connecting to Ollama server at {base_url}',
+                    'message': 'Ollama server did not respond within 10 seconds',
+                    'base_url': base_url
+                }
+            )
         except requests.exceptions.HTTPError as e:
-            return jsonify({
-                'success': False,
-                'error': f'HTTP error from Ollama server: {e.response.status_code}',
-                'message': f'Ollama server returned an error: {e.response.text}',
-                'base_url': base_url
-            }), 502
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    'success': False,
+                    'error': f'HTTP error from Ollama server: {e.response.status_code}',
+                    'message': f'Ollama server returned an error: {e.response.text}',
+                    'base_url': base_url
+                }
+            )
         except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': f'Unexpected error connecting to Ollama: {str(e)}',
-                'base_url': base_url
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    'success': False,
+                    'error': f'Unexpected error connecting to Ollama: {str(e)}',
+                    'base_url': base_url
+                }
+            )
 
         # Parse Ollama response
         try:
             ollama_data = response.json()
         except json.JSONDecodeError:
-            return jsonify({
-                'success': False,
-                'error': 'Invalid JSON response from Ollama server',
-                'message': 'Ollama server returned malformed JSON',
-                'base_url': base_url
-            }), 502
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    'success': False,
+                    'error': 'Invalid JSON response from Ollama server',
+                    'message': 'Ollama server returned malformed JSON',
+                    'base_url': base_url
+                }
+            )
 
         # Transform Ollama response to expected format
         models = []
@@ -1678,21 +1731,26 @@ def api_get_ollama_models():
 
         print(f"🦙 LLM API: Found {len(models)} models, cached for {ollama_models_cache['ttl']} seconds")
 
-        return jsonify({
+        return {
             'success': True,
             'models': models,
             'count': len(models),
             'base_url': base_url,
             'cached': False,
             'cache_ttl_seconds': ollama_models_cache['ttl']
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Internal server error while fetching Ollama models'
-        }), 500
+        raise HTTPException(
+            status_code=500,
+            detail={
+                'success': False,
+                'error': str(e),
+                'message': 'Internal server error while fetching Ollama models'
+            }
+        )
 
 # =============================================================================
 # PERFORMANCE APIs - Performance monitoring and optimization
@@ -2537,33 +2595,40 @@ def api_test_config():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup."""
     print("🚀 Starting Memory Agent Web Server...")
 
     # Check environment
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY not found in environment variables.")
         print("Please set your OpenAI API key in the .env file or environment.")
-        exit(1)
+        raise RuntimeError("OPENAI_API_KEY not found")
 
     # Initialize LLM manager
     if init_llm_manager():
         print("✅ LLM manager ready")
     else:
         print("❌ Failed to initialize LLM manager")
-        exit(1)
+        raise RuntimeError("Failed to initialize LLM manager")
 
     # Initialize LangGraph memory agent
     if init_memory_agent():
         print("✅ Memory agent ready")
         print("🌐 Server running at http://localhost:5001")
-        print("📖 API docs available at http://localhost:5001")
+        print("📖 API docs available at http://localhost:5001/docs")
         print()
-        # Disable Flask's debug output by setting debug=False and configuring logging
-        import logging
-        log = logging.getLogger('werkzeug')
-        log.setLevel(logging.WARNING)
-        app.run(debug=False, host='0.0.0.0', port=5001)
     else:
         print("❌ Failed to initialize memory agent")
-        exit(1)
+        raise RuntimeError("Failed to initialize memory agent")
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(
+        "web_app:app",
+        host="0.0.0.0",
+        port=5001,
+        log_level="info",
+        reload=False
+    )
