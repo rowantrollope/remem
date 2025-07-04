@@ -112,6 +112,7 @@ app_config = {
             "context_analysis": 3600,
             "memory_grounding": 1800,
             "extraction_evaluation": 900,
+            "memory_extraction_evaluation": 300,  # Short TTL for memory evaluation
             "conversation": 300,
             "answer_generation": 1800
         },
@@ -121,6 +122,7 @@ app_config = {
             "context_analysis": 0.88,
             "memory_grounding": 0.82,
             "extraction_evaluation": 0.80,
+            "memory_extraction_evaluation": 0.70,  # Lower threshold for memory evaluation to reduce false cache hits
             "conversation": 0.95,
             "answer_generation": 0.87
         }
@@ -152,13 +154,7 @@ class ContextSetRequest(BaseModel):
     activity: Optional[str] = Field(None, description="Current activity")
     people_present: Optional[List[str]] = Field(None, description="List of people present")
 
-class KLineRecallRequest(BaseModel):
-    query: str = Field(..., description="Query to construct mental state around")
-    top_k: int = Field(5, ge=1, description="Number of memories to include")
-    filter: Optional[str] = Field(None, description="Filter expression for Redis VSIM command")
-    use_llm_filtering: bool = Field(False, description="Apply LLM-based relevance filtering")
-    min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
-    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to search")
+
 
 class KLineAnswerRequest(BaseModel):
     question: str = Field(..., description="Question to answer")
@@ -199,6 +195,15 @@ class CacheClearRequest(BaseModel):
     pattern: Optional[str] = Field(None, description="Cache pattern to clear")
     operation_type: Optional[str] = Field(None, description="Operation type to clear")
 
+class ConfigUpdateRequest(BaseModel):
+    redis: Optional[Dict[str, Any]] = Field(None, description="Redis configuration")
+    llm: Optional[Dict[str, Any]] = Field(None, description="LLM configuration")
+    openai: Optional[Dict[str, Any]] = Field(None, description="OpenAI configuration")
+    langgraph: Optional[Dict[str, Any]] = Field(None, description="LangGraph configuration")
+    memory_agent: Optional[Dict[str, Any]] = Field(None, description="Memory agent configuration")
+    web_server: Optional[Dict[str, Any]] = Field(None, description="Web server configuration")
+    performance: Optional[Dict[str, Any]] = Field(None, description="Performance configuration")
+
 def init_llm_manager():
     """Initialize the LLM manager with current configuration."""
     try:
@@ -229,6 +234,41 @@ def init_llm_manager():
     except Exception as e:
         print(f"Failed to initialize LLM manager: {e}")
         return False
+
+def reinitialize_llm_manager_with_optimizations():
+    """Reinitialize LLM manager and reapply performance optimizations if enabled."""
+    try:
+        # Reinitialize the LLM manager
+        if not init_llm_manager():
+            return False, "Failed to reinitialize LLM manager"
+
+        # Reapply performance optimizations if enabled
+        if app_config["performance"]["optimization_enabled"] and app_config["performance"]["cache_enabled"]:
+            try:
+                optimizer = get_performance_optimizer()
+                if optimizer:
+                    llm_manager = get_llm_manager()
+                    cached_llm_manager = optimizer.optimize_llm_manager(llm_manager)
+                    
+                    # Replace the global LLM manager with the cached version
+                    import llm_manager as llm_manager_module
+                    llm_manager_module.llm_manager = cached_llm_manager
+                    
+                    cache_type = "semantic vectorset" if app_config["performance"]["use_semantic_cache"] else "hash-based"
+                    print(f"✅ LLM manager reinitialized and wrapped with {cache_type} caching")
+                else:
+                    print("✅ LLM manager reinitialized (no performance optimizer available)")
+            except Exception as e:
+                print(f"⚠️ LLM manager reinitialized but performance optimization failed: {e}")
+                # Don't fail completely, the LLM manager is still functional
+        else:
+            print("✅ LLM manager reinitialized (performance optimizations disabled)")
+
+        return True, "LLM manager reinitialized successfully"
+    except Exception as e:
+        error_msg = f"Failed to reinitialize LLM manager: {e}"
+        print(f"❌ {error_msg}")
+        return False, error_msg
 
 def init_memory_agent():
     """Initialize the LangGraph memory agent with current configuration."""
@@ -652,108 +692,9 @@ async def api_get_neme_context():
 # - Advanced cognitive operations that combine multiple Nemes
 # =============================================================================
 
-@app.post('/api/klines/recall')
-async def api_kline_recall(request: KLineRecallRequest):
-    """Construct a mental state (K-line) by recalling relevant memories.
 
-    This operation searches for and filters relevant Nemes to construct
-    a coherent mental state for a specific query or context. The result
-    is a formatted collection of memories that can be used for reasoning.
 
-    Returns:
-        JSON with formatted mental state, supporting memories, and memory breakdown by type
-    """
-    try:
-        query = request.query.strip()
-        top_k = request.top_k
-        filter_expr = request.filter
-        use_llm_filtering = request.use_llm_filtering
-        min_similarity = request.min_similarity
-        vectorstore_name = request.vectorstore_name
-
-        if not query:
-            raise HTTPException(status_code=400, detail='Query is required')
-
-        print(f"🧠 K-LINE API: Constructing mental state for: {query} (top_k: {top_k})")
-        if vectorstore_name:
-            print(f"📦 Vectorstore: {vectorstore_name}")
-        if filter_expr:
-            print(f"🔍 Filter: {filter_expr}")
-        if use_llm_filtering:
-            print(f"🤖 LLM filtering: enabled")
-
-        # Use existing memory agent with vectorstore parameter
-        if not memory_agent:
-            raise HTTPException(status_code=500, detail='Memory agent not initialized')
-
-        # Search for relevant memories with embedding optimization
-        validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(query)
-
-        if validation_result["type"] == "search":
-            # Use the embedding-optimized query for vector search
-            search_query = validation_result.get("embedding_query") or validation_result["content"]
-            print(f"🔍 Using optimized search query: '{search_query}'")
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
-            )
-        else:
-            # For help queries, still search but with original query
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
-            )
-
-        memories = search_result['memories']
-        filtering_info = search_result['filtering_info']
-
-        # Apply LLM filtering if explicitly requested (now optional and defaults to false)
-        if use_llm_filtering and memories:
-            print(f"🤖 K-LINE API: Applying LLM filtering to {len(memories)} memories (explicitly requested)")
-            filtered_memories = memory_agent.memory_agent.processing.filter_relevant_memories(query, memories)
-
-            # Track filtering statistics
-            original_count = len(memories)
-            filtered_count = len(filtered_memories)
-            print(f"🤖 K-LINE API: LLM filtering kept {filtered_count}/{original_count} memories")
-
-            memories = filtered_memories
-        elif memories:
-            print(f"🤖 K-LINE API: Sending {len(memories)} memories directly to mental state construction (no pre-filtering)")
-
-        # Construct K-line (mental state) from memories
-        if memories:
-            kline_result = memory_agent.memory_agent.construct_kline(query, memories)
-            mental_state = kline_result.get('mental_state', 'No mental state could be constructed.')
-            coherence_score = kline_result.get('coherence_score', 0.0)
-        else:
-            mental_state = 'No relevant memories found to construct mental state.'
-            coherence_score = 0.0
-
-        response_data = {
-            'success': True,
-            'query': query,
-            'mental_state': mental_state,
-            'coherence_score': coherence_score,
-            'memories': memories,
-            'memory_count': len(memories),
-            'filtering_info': filtering_info,
-            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
-        }
-
-        # Add filtering information if LLM filtering was used
-        if use_llm_filtering:
-            response_data['llm_filtering_applied'] = True
-            if 'original_count' in locals():
-                response_data['original_memory_count'] = original_count
-                response_data['filtered_memory_count'] = filtered_count
-
-        return response_data
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post('/api/klines/ask')
+@app.post('/api/memory/ask')
 async def api_kline_answer(request: KLineAnswerRequest):
     """Answer a question using K-line construction and reasoning.
 
@@ -987,14 +928,6 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
         session = app.chat_sessions[session_id]
         use_memory = session.get('use_memory', False)
 
-        # Add user message to session
-        user_message = {
-            'role': 'user',
-            'content': message,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-        session['messages'].append(user_message)
-
         if use_memory:
             print(f"1) User said: '{message[:80]}{'...' if len(message) > 80 else ''}'")
         else:
@@ -1004,6 +937,13 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
         if use_memory:
             return _handle_memory_enabled_message(session_id, session, message, stream, store_memory, top_k, min_similarity)
         else:
+            # Add user message to session for non-memory sessions
+            user_message = {
+                'role': 'user',
+                'content': message,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            session['messages'].append(user_message)
             return _handle_standard_message(session_id, session, stream)
 
     except HTTPException:
@@ -1068,15 +1008,21 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     if not memory_agent:
         raise HTTPException(status_code=500, detail='Memory agent not initialized but session requires memory')
 
+    # Create user message object
+    user_message_obj = {
+        'role': 'user',
+        'content': user_message,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Add user message to session messages for conversation history
+    session['messages'].append(user_message_obj)
+
     # Add to conversation buffer for memory extraction
     if 'conversation_buffer' not in session:
         session['conversation_buffer'] = []
 
-    session['conversation_buffer'].append({
-        'role': 'user',
-        'content': user_message,
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    })
+    session['conversation_buffer'].append(user_message_obj)
 
     # Retrieve relevant memories for context using advanced filtering with embedding optimization
     relevant_memories = []
@@ -1308,17 +1254,29 @@ CONVERSATIONAL TEXT TO EVALUATE:
 Respond with ONLY "YES" if the text contains valuable information worth remembering, or "NO" if it doesn't. Do not include any explanation."""
 
         # Use Tier 2 LLM for memory extraction evaluation
+        # Use specific operation type to avoid false semantic cache hits
         llm_manager = get_llm_manager()
         tier2_client = llm_manager.get_tier2_client()
 
         response = tier2_client.chat_completion(
             messages=[{"role": "user", "content": evaluation_prompt}],
+            operation_type='memory_extraction_evaluation',  # Specific operation type for memory evaluation
+            cache_context={'content_length': len(conversation_text)},  # Add unique context
             temperature=0.1,  # Low temperature for consistent evaluation
             max_tokens=10     # We only need YES or NO
         )
 
         result = response['content'].strip().upper()
-        return result == "YES"
+        
+        # Debug logging to help track evaluation decisions
+        cache_hit = response.get('_cache_hit', False)
+        similarity = response.get('_semantic_similarity')
+        
+        decision = result == "YES"
+        print(f"🔍 Memory evaluation: '{conversation_text[:30]}...' → {result} (cache: {cache_hit}" + 
+              (f", similarity: {similarity:.3f}" if similarity else "") + ")")
+        
+        return decision
 
     except Exception as e:
         print(f"⚠️ LLM evaluation failed, falling back to keyword approach: {e}")
@@ -1337,7 +1295,14 @@ def _contains_extractable_info_fallback(messages):
     ]
 
     conversation_text = ' '.join([msg['content'] for msg in messages]).lower()
-    return any(keyword in conversation_text for keyword in extractable_keywords)
+    keyword_match = any(keyword in conversation_text for keyword in extractable_keywords)
+    
+    # Debug logging for fallback
+    if keyword_match:
+        matched_keywords = [kw for kw in extractable_keywords if kw in conversation_text]
+        print(f"🔑 Keyword fallback: FOUND keywords: {matched_keywords}")
+    
+    return keyword_match
 
 @app.get('/api/agent/session/{session_id}')
 async def api_get_agent_session(session_id: str = Path(..., description="The agent session ID")):
@@ -1576,16 +1541,33 @@ async def api_update_llm_config(request: LLMConfigUpdate):
                     if provider not in ['openai', 'ollama']:
                         raise HTTPException(status_code=400, detail=f'LLM provider must be "openai" or "ollama", got "{provider}"')
 
+        # Reinitialize LLM manager if changes were made
+        llm_reinitialized = False
+        llm_reinit_error = None
+        
+        if changes_made:
+            print(f"🔄 LLM configuration changed, reinitializing LLM manager...")
+            success, message = reinitialize_llm_manager_with_optimizations()
+            llm_reinitialized = success
+            if not success:
+                llm_reinit_error = message
+                warnings.append(f"LLM reinitialization failed: {message}")
+
         # Prepare response
         response_data = {
             'success': True,
             'changes_made': changes_made,
-            'requires_restart': requires_restart,
+            'llm_reinitialized': llm_reinitialized,
             'warnings': warnings
         }
 
-        if requires_restart:
-            response_data['message'] = 'LLM configuration updated. System restart required for changes to take effect.'
+        if llm_reinit_error:
+            response_data['llm_reinit_error'] = llm_reinit_error
+
+        if changes_made and llm_reinitialized:
+            response_data['message'] = 'LLM configuration updated and applied successfully.'
+        elif changes_made and not llm_reinitialized:
+            response_data['message'] = 'LLM configuration updated but failed to apply. Manual restart may be required.'
         elif changes_made:
             response_data['message'] = 'LLM configuration updated successfully.'
         else:
@@ -1756,8 +1738,8 @@ async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', 
 # PERFORMANCE APIs - Performance monitoring and optimization
 # =============================================================================
 
-@app.route('/api/performance/metrics', methods=['GET'])
-def api_get_performance_metrics():
+@app.get('/api/performance/metrics')
+async def api_get_performance_metrics():
     """Get current performance metrics and cache statistics.
 
     Returns:
@@ -1767,16 +1749,14 @@ def api_get_performance_metrics():
         optimizer = get_performance_optimizer()
 
         if not optimizer:
-            return jsonify({
-                'success': False,
-                'error': 'Performance optimizer not initialized',
-                'optimization_enabled': app_config["performance"]["optimization_enabled"],
-                'cache_enabled': app_config["performance"]["cache_enabled"]
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail='Performance optimizer not initialized'
+            )
 
         metrics = optimizer.get_performance_metrics()
 
-        return jsonify({
+        return {
             'success': True,
             'performance_metrics': metrics,
             'configuration': {
@@ -1786,21 +1766,24 @@ def api_get_performance_metrics():
                 'cache_default_ttl': app_config["performance"]["cache_default_ttl"]
             },
             'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/performance/cache/clear', methods=['POST'])
-def api_clear_performance_cache():
+@app.post('/api/performance/cache/clear')
+async def api_clear_performance_cache(request: Optional[CacheClearRequest] = None):
     """Clear performance cache entries.
 
-    Body (optional):
-        pattern (str): Cache pattern to clear (for hash-based cache)
-        operation_type (str): Operation type to clear (for semantic cache)
-                             Options: query_optimization, memory_relevance, context_analysis,
-                                     memory_grounding, extraction_evaluation, conversation, answer_generation
-        If neither provided, clears all cache entries
+    Args:
+        request: Optional request body with pattern and operation_type
+            - pattern (str): Cache pattern to clear (for hash-based cache)
+            - operation_type (str): Operation type to clear (for semantic cache)
+                                   Options: query_optimization, memory_relevance, context_analysis,
+                                           memory_grounding, extraction_evaluation, conversation, answer_generation
+            If neither provided, clears all cache entries
 
     Returns:
         JSON with clearing results
@@ -1809,28 +1792,29 @@ def api_clear_performance_cache():
         optimizer = get_performance_optimizer()
 
         if not optimizer:
-            return jsonify({
-                'success': False,
-                'error': 'Performance optimizer not initialized'
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail='Performance optimizer not initialized'
+            )
 
-        data = request.get_json() or {}
-        pattern = data.get('pattern')
-        operation_type = data.get('operation_type')
+        pattern = request.pattern if request else None
+        operation_type = request.operation_type if request else None
 
         result = optimizer.clear_cache(pattern=pattern, operation_type=operation_type)
 
-        return jsonify({
+        return {
             'success': True,
             **result,
             'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/performance/cache/analyze', methods=['GET'])
-def api_analyze_cache_effectiveness():
+@app.get('/api/performance/cache/analyze')
+async def api_analyze_cache_effectiveness():
     """Analyze cache effectiveness and provide optimization recommendations.
 
     Returns:
@@ -1840,30 +1824,60 @@ def api_analyze_cache_effectiveness():
         optimizer = get_performance_optimizer()
 
         if not optimizer:
-            return jsonify({
-                'success': False,
-                'error': 'Performance optimizer not initialized'
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail='Performance optimizer not initialized'
+            )
 
         analysis = optimizer.analyze_cache_effectiveness()
 
-        return jsonify({
+        return {
             'success': True,
             'cache_analysis': analysis,
             'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete('/api/performance/cache/memory-evaluation')
+async def api_clear_memory_evaluation_cache():
+    """Clear semantic cache entries for memory evaluation to resolve false cache hits.
 
+    Returns:
+        JSON with clearing results
+    """
+    try:
+        optimizer = get_performance_optimizer()
+
+        if not optimizer:
+            raise HTTPException(
+                status_code=500,
+                detail='Performance optimizer not initialized'
+            )
+
+        result = optimizer.clear_cache(operation_type='memory_extraction_evaluation')
+
+        return {
+            'success': True,
+            'message': 'Memory evaluation cache cleared',
+            **result,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT APIs - Runtime configuration management
 # =============================================================================
 
-@app.route('/api/config', methods=['GET'])
-def api_get_config():
+@app.get('/api/config')
+async def api_get_config():
     """Get current system configuration.
 
     Returns:
@@ -1910,36 +1924,37 @@ def api_get_config():
                 runtime_info["redis_connected"] = False
                 runtime_info["redis_error"] = str(e)
 
-        return jsonify({
+        return {
             'success': True,
             'config': safe_config,
             'runtime': runtime_info
-        })
+        }
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail={'error': str(e)})
 
-@app.route('/api/config', methods=['PUT'])
-def api_update_config():
+@app.put('/api/config')
+async def api_update_config(request: ConfigUpdateRequest):
     """Update system configuration.
 
-    Body:
-        Configuration object with any subset of configuration categories:
-        - redis: {host, port, db, vectorset_key}
-        - llm: {tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}, tier2: {...}}
-        - openai: {api_key, organization, embedding_model, embedding_dimension, chat_model, temperature}
-        - langgraph: {model_name, temperature, system_prompt_enabled}
-        - memory_agent: {default_top_k, apply_grounding_default, validation_enabled}
-        - web_server: {host, port, debug, cors_enabled}
+    Args:
+        request: Configuration object with any subset of configuration categories:
+            - redis: {host, port, db, vectorset_key}
+            - llm: {tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}, tier2: {...}}
+            - openai: {api_key, organization, embedding_model, embedding_dimension, chat_model, temperature}
+            - langgraph: {model_name, temperature, system_prompt_enabled}
+            - memory_agent: {default_top_k, apply_grounding_default, validation_enabled}
+            - web_server: {host, port, debug, cors_enabled}
+            - performance: {cache_enabled, optimization_enabled, etc.}
 
     Returns:
         JSON with success status, updated configuration, and any warnings
     """
     try:
-        data = request.get_json()
+        data = request.dict(exclude_unset=True)
 
         if not data:
-            return jsonify({'error': 'Configuration data is required'}), 400
+            raise HTTPException(status_code=400, detail='Configuration data is required')
 
         warnings = []
         changes_made = []
@@ -1958,7 +1973,7 @@ def api_update_config():
                         try:
                             new_value = int(new_value)
                         except (ValueError, TypeError):
-                            return jsonify({'error': f'Redis {key} must be an integer'}), 400
+                            raise HTTPException(status_code=400, detail=f'Redis {key} must be an integer')
 
                     if old_value != new_value:
                         app_config['redis'][key] = new_value
@@ -2010,13 +2025,13 @@ def api_update_config():
                                     changes_made.append(f"llm.{tier}.{key}: {old_value} → {new_value}")
                                     requires_restart = True
                             except (ValueError, TypeError):
-                                return jsonify({'error': f'LLM {tier}.{key} must be a number'}), 400
+                                raise HTTPException(status_code=400, detail=f'LLM {tier}.{key} must be a number')
 
                     # Validate provider
                     if 'provider' in tier_config:
                         provider = tier_config['provider'].lower()
                         if provider not in ['openai', 'ollama']:
-                            return jsonify({'error': f'LLM provider must be "openai" or "ollama", got "{provider}"'}), 400
+                            raise HTTPException(status_code=400, detail=f'LLM provider must be "openai" or "ollama", got "{provider}"')
 
         # Update OpenAI configuration
         if 'openai' in data:
@@ -2049,7 +2064,7 @@ def api_update_config():
                             changes_made.append(f"openai.{key}: {old_value} → {new_value}")
                             requires_restart = True
                     except (ValueError, TypeError):
-                        return jsonify({'error': f'OpenAI {key} must be a number'}), 400
+                        raise HTTPException(status_code=400, detail=f'OpenAI {key} must be a number')
 
         # Update LangGraph configuration
         if 'langgraph' in data:
@@ -2075,7 +2090,7 @@ def api_update_config():
                         changes_made.append(f"langgraph.temperature: {old_value} → {new_value}")
                         requires_restart = True
                 except (ValueError, TypeError):
-                    return jsonify({'error': 'LangGraph temperature must be a number'}), 400
+                    raise HTTPException(status_code=400, detail='LangGraph temperature must be a number')
 
             if 'system_prompt_enabled' in langgraph_config:
                 old_value = app_config['langgraph'].get('system_prompt_enabled')
@@ -2099,7 +2114,7 @@ def api_update_config():
                         app_config['memory_agent']['default_top_k'] = new_value
                         changes_made.append(f"memory_agent.default_top_k: {old_value} → {new_value}")
                 except (ValueError, TypeError):
-                    return jsonify({'error': 'Memory agent default_top_k must be an integer'}), 400
+                    raise HTTPException(status_code=400, detail='Memory agent default_top_k must be an integer')
 
             for key in ['apply_grounding_default', 'validation_enabled']:
                 if key in memory_config:
@@ -2134,7 +2149,7 @@ def api_update_config():
                         changes_made.append(f"web_server.port: {old_value} → {new_value}")
                         warnings.append("Web server port change requires application restart to take effect")
                 except (ValueError, TypeError):
-                    return jsonify({'error': 'Web server port must be an integer'}), 400
+                    raise HTTPException(status_code=400, detail='Web server port must be an integer')
 
             for key in ['debug', 'cors_enabled']:
                 if key in web_config:
@@ -2171,7 +2186,7 @@ def api_update_config():
                             app_config['performance'][key] = new_value
                             changes_made.append(f"performance.{key}: {old_value} → {new_value}")
                     except (ValueError, TypeError):
-                        return jsonify({'error': f'Performance {key} must be an integer'}), 400
+                        raise HTTPException(status_code=400, detail=f'Performance {key} must be an integer')
 
             if 'semantic_similarity_threshold' in perf_config:
                 try:
@@ -2182,7 +2197,7 @@ def api_update_config():
                         app_config['performance']['semantic_similarity_threshold'] = new_value
                         changes_made.append(f"performance.semantic_similarity_threshold: {old_value} → {new_value}")
                 except (ValueError, TypeError):
-                    return jsonify({'error': 'Performance semantic_similarity_threshold must be a float'}), 400
+                    raise HTTPException(status_code=400, detail='Performance semantic_similarity_threshold must be a float')
 
             if 'cache_ttl_settings' in perf_config:
                 ttl_settings = perf_config['cache_ttl_settings']
@@ -2196,7 +2211,23 @@ def api_update_config():
                                 app_config['performance']['cache_ttl_settings'][ttl_key] = new_value
                                 changes_made.append(f"performance.cache_ttl_settings.{ttl_key}: {old_value} → {new_value}")
                         except (ValueError, TypeError):
-                            return jsonify({'error': f'Performance cache TTL {ttl_key} must be an integer'}), 400
+                            raise HTTPException(status_code=400, detail=f'Performance cache TTL {ttl_key} must be an integer')
+
+        # Check if LLM configuration was changed and reinitialize if needed
+        llm_reinitialized = False
+        llm_reinit_error = None
+        llm_config_changed = any('llm.' in change for change in changes_made)
+        
+        if llm_config_changed:
+            print(f"🔄 LLM configuration changed, reinitializing LLM manager...")
+            success, message = reinitialize_llm_manager_with_optimizations()
+            llm_reinitialized = success
+            if not success:
+                llm_reinit_error = message
+                warnings.append(f"LLM reinitialization failed: {message}")
+            else:
+                # If LLM reinitialization was successful, we don't need a full restart for LLM changes
+                requires_restart = any(change for change in changes_made if not change.startswith('llm.'))
 
         # Prepare response
         response_data = {
@@ -2206,20 +2237,32 @@ def api_update_config():
             'warnings': warnings
         }
 
+        # Add LLM reinitialization info if LLM config was changed
+        if llm_config_changed:
+            response_data['llm_reinitialized'] = llm_reinitialized
+            if llm_reinit_error:
+                response_data['llm_reinit_error'] = llm_reinit_error
+
         if requires_restart:
             response_data['message'] = 'Configuration updated. Memory agent restart required for changes to take effect.'
+        elif changes_made and llm_config_changed and llm_reinitialized:
+            response_data['message'] = 'Configuration updated and LLM changes applied successfully.'
+        elif changes_made and llm_config_changed and not llm_reinitialized:
+            response_data['message'] = 'Configuration updated but LLM changes failed to apply. Manual restart may be required.'
         elif changes_made:
             response_data['message'] = 'Configuration updated successfully.'
         else:
             response_data['message'] = 'No changes were made to the configuration.'
 
-        return jsonify(response_data)
+        return response_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail={'error': str(e)})
 
-@app.route('/api/config/reload', methods=['POST'])
-def api_reload_config():
+@app.post('/api/config/reload')
+async def api_reload_config():
     """Reload configuration and restart the memory agent.
 
     This endpoint reinitializes the memory agent with the current configuration.
@@ -2262,7 +2305,7 @@ def api_reload_config():
             except Exception as e:
                 print(f"Warning: Could not get memory info after reload: {e}")
 
-            return jsonify({
+            return {
                 'success': True,
                 'message': 'Configuration reloaded and memory agent restarted successfully',
                 'reload_details': {
@@ -2280,45 +2323,53 @@ def api_reload_config():
                     }
                 },
                 'timestamp': datetime.now(timezone.utc).isoformat()
-            })
+            }
         else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to reinitialize memory agent with new configuration',
-                'message': 'Check Redis connection and OpenAI API key',
-                'reload_details': {
-                    'agent_was_initialized': old_agent_initialized,
-                    'agent_now_initialized': False,
-                    'config_attempted': {
-                        'redis_host': app_config['redis']['host'],
-                        'redis_port': app_config['redis']['port'],
-                        'redis_db': app_config['redis']['db']
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    'success': False,
+                    'error': 'Failed to reinitialize memory agent with new configuration',
+                    'message': 'Check Redis connection and OpenAI API key',
+                    'reload_details': {
+                        'agent_was_initialized': old_agent_initialized,
+                        'agent_now_initialized': False,
+                        'config_attempted': {
+                            'redis_host': app_config['redis']['host'],
+                            'redis_port': app_config['redis']['port'],
+                            'redis_db': app_config['redis']['db']
+                        }
                     }
                 }
-            }), 500
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Error occurred during configuration reload'
-        }), 500
+        raise HTTPException(
+            status_code=500,
+            detail={
+                'success': False,
+                'error': str(e),
+                'message': 'Error occurred during configuration reload'
+            }
+        )
 
-@app.route('/api/config/test', methods=['POST'])
-def api_test_config():
+@app.post('/api/config/test')
+async def api_test_config(request: ConfigUpdateRequest):
     """Test configuration without applying it.
 
-    Body:
-        Configuration object to test (same format as PUT /api/config)
+    Args:
+        request: Configuration object to test (same format as PUT /api/config)
 
     Returns:
         JSON with test results for each configuration component
     """
     try:
-        data = request.get_json()
+        data = request.dict(exclude_unset=True)
 
         if not data:
-            return jsonify({'error': 'Configuration data is required for testing'}), 400
+            raise HTTPException(status_code=400, detail='Configuration data is required for testing')
 
         test_results = {
             'overall_valid': True,
@@ -2585,15 +2636,17 @@ def api_test_config():
             if not web_test['valid']:
                 test_results['overall_valid'] = False
 
-        return jsonify({
+        return {
             'success': True,
             'test_results': test_results,
             'message': 'Configuration test completed',
             'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail={'error': str(e)})
 
 @app.on_event("startup")
 async def startup_event():

@@ -73,6 +73,7 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
                 messages=[
                     {"role": "user", "content": validation_prompt}
                 ],
+                bypass_cache=True,  # Input validation is context-dependent and needs fresh evaluation
                 temperature=0.1,  # Very low temperature for consistent validation
                 max_tokens=200
             )

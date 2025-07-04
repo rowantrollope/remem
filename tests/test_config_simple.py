@@ -32,9 +32,9 @@ def make_request(method, endpoint, data=None):
             error_data = json.loads(e.read().decode('utf-8'))
             return e.code, error_data
         except:
-            return e.code, {"error": str(e)}
+            return e.code, {"detail": str(e)}
     except Exception as e:
-        return None, {"error": str(e)}
+        return None, {"detail": str(e)}
 
 def test_endpoint(method, endpoint, data=None, description=""):
     """Test an endpoint and print results."""
@@ -50,7 +50,7 @@ def test_endpoint(method, endpoint, data=None, description=""):
         print(f"Status: {status}")
         print(f"Response: {json.dumps(result, indent=2)}")
     else:
-        print(f"Error: {result.get('error', 'Unknown error')}")
+        print(f"Error: {result.get('detail') or result.get('error', 'Unknown error')}")
 
 def main():
     """Test configuration API with simple examples."""

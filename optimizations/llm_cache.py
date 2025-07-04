@@ -233,6 +233,7 @@ class CachedLLMClient:
     def chat_completion(self, messages: List[Dict[str, str]], 
                        operation_type: str = 'conversation',
                        cache_context: Dict[str, Any] = None,
+                       bypass_cache: bool = False,
                        temperature: Optional[float] = None,
                        max_tokens: Optional[int] = None,
                        **kwargs) -> Dict[str, Any]:
@@ -243,6 +244,7 @@ class CachedLLMClient:
             messages: Chat messages
             operation_type: Type of operation for cache key generation
             cache_context: Additional context for cache key
+            bypass_cache: If True, skip caching entirely
             temperature: LLM temperature
             max_tokens: Max tokens
             **kwargs: Additional LLM parameters
@@ -250,6 +252,18 @@ class CachedLLMClient:
         Returns:
             LLM response with cache metadata
         """
+        # Skip cache entirely if bypass_cache is True
+        if bypass_cache:
+            response = self.llm_client.chat_completion(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
+            response['_cache_hit'] = False
+            response['_cache_bypassed'] = True
+            return response
+        
         # Create cache key from messages and parameters
         content = json.dumps(messages, sort_keys=True)
         context = {

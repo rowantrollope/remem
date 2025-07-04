@@ -458,6 +458,7 @@ Be highly selective and focus only on information that would significantly impro
                 messages=[
                     {"role": "user", "content": extraction_prompt}
                 ],
+                bypass_cache=True,  # Memory extraction is highly context-dependent and accuracy-critical
                 temperature=0.2,  # Low temperature for consistent extraction
                 max_tokens=1500   # Allow for detailed extraction
             )

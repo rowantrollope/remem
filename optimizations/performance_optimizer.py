@@ -46,6 +46,7 @@ class PerformanceOptimizer:
                 'context_analysis': 3600,        # 1 hour - relatively stable
                 'memory_grounding': 1800,        # 30 minutes - context dependent
                 'extraction_evaluation': 900,   # 15 minutes - user behavior dependent
+                'memory_extraction_evaluation': 300,  # 5 minutes - memory evaluation caching
                 'extraction_comprehensive': 1200, # 20 minutes - comprehensive extraction
                 'extraction_batch': 1200,       # 20 minutes - batch extraction
                 'conversation': 300,             # 5 minutes - highly dynamic
@@ -64,6 +65,7 @@ class PerformanceOptimizer:
                 'context_analysis': 0.88,       # High for context analysis
                 'memory_grounding': 0.82,       # Medium for grounding
                 'extraction_evaluation': 0.80,  # Lower for extraction
+                'memory_extraction_evaluation': 0.70,  # Lower threshold for memory evaluation
                 'conversation': 0.95,           # Very high for conversations
                 'answer_generation': 0.87       # High for answer generation
             }

@@ -128,7 +128,7 @@ def test_memory_extraction():
         if cleanup_result['success']:
             print(f"✅ Cleaned up {cleanup_result['memories_deleted']} test memories")
         else:
-            print(f"⚠️ Cleanup warning: {cleanup_result.get('error', 'Unknown error')}")
+            print(f"⚠️ Cleanup warning: {cleanup_result.get('detail') or cleanup_result.get('error', 'Unknown error')}")
     except Exception as e:
         print(f"⚠️ Cleanup failed: {e}")
 

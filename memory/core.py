@@ -387,10 +387,19 @@ If no context-dependent references are found, return empty arrays for all catego
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
+            # Create cache context for more specific cache keys
+            analysis_context = {
+                'text_length': len(memory_text),
+                'text_hash': hash(memory_text) % 10000  # Add text variation to cache key
+            }
+
             response = tier1_client.chat_completion(
                 messages=[
                     {"role": "user", "content": analysis_prompt}
                 ],
+                operation_type='context_analysis',
+                cache_context={'text_length': len(memory_text)},
+                bypass_cache=True,  # Context analysis is highly dependent on specific content
                 temperature=0.1,
                 max_tokens=300
             )
@@ -488,10 +497,22 @@ Respond with a JSON object:
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
+            # Create context for more specific cache keys
+            grounding_context = {
+                'dependencies_count': total_dependencies,
+                'temporal_deps': len(dependencies.get('temporal', [])),
+                'spatial_deps': len(dependencies.get('spatial', [])),
+                'current_time': context['temporal']['date'],
+                'location': context['spatial']['location']
+            }
+
             response = tier1_client.chat_completion(
                 messages=[
                     {"role": "user", "content": grounding_prompt}
                 ],
+                operation_type='memory_grounding',
+                cache_context={'dependencies_count': total_dependencies, 'current_date': context['temporal']['date']},
+                bypass_cache=True,  # Memory grounding is highly context-dependent and accuracy-critical
                 temperature=0.2,
                 max_tokens=500
             )

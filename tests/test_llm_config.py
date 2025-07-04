@@ -34,7 +34,7 @@ def test_llm_clients():
             connection_result = openai_client.test_connection()
             print(f"   Connection test: {'✅ PASS' if connection_result['success'] else '❌ FAIL'}")
             if not connection_result['success']:
-                print(f"   Error: {connection_result.get('error', 'Unknown error')}")
+                print(f"   Error: {connection_result.get('detail') or connection_result.get('error', 'Unknown error')}")
             
             # Test chat completion
             if connection_result['success']:
@@ -66,7 +66,7 @@ def test_llm_clients():
         connection_result = ollama_client.test_connection()
         print(f"   Connection test: {'✅ PASS' if connection_result['success'] else '❌ FAIL'}")
         if not connection_result['success']:
-            print(f"   Error: {connection_result.get('error', 'Unknown error')}")
+            print(f"   Error: {connection_result.get('detail') or connection_result.get('error', 'Unknown error')}")
             if 'available_models' in connection_result:
                 print(f"   Available models: {connection_result['available_models']}")
         
