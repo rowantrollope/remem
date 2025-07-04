@@ -142,10 +142,10 @@ class LangGraphMemoryAgent:
 4. **AVOID OVER-EXTRACTION**: Don't store minor details, temporary information, or duplicates
 
 **What to Extract**:
-- Important preferences (dietary restrictions, travel preferences, etc)
-- Significant constraints (budget limits, accessibility needs, etc)
-- Key personal details (family composition, location, etc)
-- Major plans or goals
+- Important preferences (dietary restrictions, travel preferences, seating preferences, food likes/dislikes)
+- Significant constraints (budget limits, accessibility needs, time constraints)
+- Key personal details (family composition, location, occupation)
+- Major plans or goals (upcoming trips, important events, life changes)
 - Explicit details that might be useful based on the conversation and the type of assistant you are. For example a travel agent might find it useful to remember that the user has been to Italy before.
 
 **What NOT to Extract**:
@@ -186,10 +186,10 @@ Be helpful and conversational while being selective about what information is wo
 4. **AVOID DUPLICATES**: Don't store information that's already captured
 
 **Remember These Types of Information**:
-- Important preferences (dietary restrictions, travel preferences)
-- Significant constraints (budget limits, accessibility needs)
-- Key personal details (family size, location)
-- Major plans or goals
+- Important preferences (dietary restrictions, travel preferences, seating preferences, food likes/dislikes)
+- Significant constraints (budget limits, accessibility needs, time constraints)
+- Key personal details (family composition, location, occupation)
+- Major plans or goals (upcoming trips, important events, life changes)
 
 **Don't Remember**:
 - Minor conversational details
@@ -350,17 +350,13 @@ For every user request:
         return datetime.now(timezone.utc).isoformat()
 
     def _check_and_extract_memories(self):
-        """Check if conversation buffer should trigger memory extraction using context-aware approach."""
+        """Extract memories from conversation buffer when threshold is met."""
         # Only extract if we have enough conversation
         if len(self.conversation_buffer) < self.extraction_threshold * 2:  # *2 for user+assistant pairs
             return
 
-        # Check if recent messages contain extractable information
-        recent_messages = self.conversation_buffer[-4:]  # Last 2 exchanges
-        if not self._contains_extractable_info(recent_messages):
-            return
-
         # Extract memories from recent conversation using context-aware approach
+        recent_messages = self.conversation_buffer[-4:]  # Last 2 exchanges
         try:
             conversation_text = self._format_conversation_for_extraction(recent_messages)
 
@@ -380,7 +376,7 @@ For every user request:
             else:
                 print("📚 MEMORY: No existing relevant memories found")
 
-            # STEP 2: Extract with existing memories context to avoid duplicates
+            # STEP 2: Extract memories (LLM will determine if anything is worth extracting)
             result = self.memory_agent.extract_and_store_memories(
                 raw_input=conversation_text,
                 context_prompt=self.extraction_context,
@@ -399,69 +395,7 @@ For every user request:
         except Exception as e:
             print(f"⚠️ MEMORY: Auto-extraction failed: {e}")
 
-    def _contains_extractable_info(self, messages) -> bool:
-        """Check if messages contain information worth extracting using enhanced LLM evaluation."""
-        # Combine messages into conversation text
-        conversation_text = ' '.join([msg['text'] for msg in messages])
 
-        # Skip very short messages
-        if len(conversation_text.strip()) < 5:
-            return False
-
-        # Use LLM to evaluate if the text contains extractable information
-        try:
-            evaluation_prompt = f"""You are a selective memory evaluation system. Your task is to determine if the following conversational text contains SIGNIFICANT information that would be valuable for future assistance.
-
-SIGNIFICANT INFORMATION INCLUDES:
-- Important preferences (dietary restrictions, travel preferences)
-- Key constraints (budget limits, accessibility needs)
-- Essential personal details (family composition, location)
-- Major plans or goals (upcoming trips, important events)
-- Significant experiences that would affect future recommendations
-
-IGNORE (be conservative):
-- Minor conversational details or temporary information
-- Vague preferences or uncertain information
-- Information that's too specific to be useful later
-- Assistant responses or suggestions
-- Conversational filler ("Hi", "Thanks", "Okay")
-- Current mood or temporary states
-
-CONVERSATIONAL TEXT TO EVALUATE:
-"{conversation_text}"
-
-Be SELECTIVE - only respond "YES" if the text contains information that would significantly improve future assistance. When in doubt, respond "NO".
-
-Respond with ONLY "YES" or "NO"."""
-
-            response = self.llm.invoke([{"role": "user", "content": evaluation_prompt}])
-            result = response.content.strip().upper()
-            return result == "YES"
-
-        except Exception as e:
-            print(f"⚠️ LLM evaluation failed, falling back to keyword approach: {e}")
-            return self._contains_extractable_info_fallback(messages)
-
-    def _contains_extractable_info_fallback(self, messages) -> bool:
-        """Conservative fallback keyword-based approach for checking extractable information."""
-        # Only look for truly significant information indicators
-        significant_keywords = [
-            # Important dietary restrictions
-            'allergic', 'allergy', 'vegetarian', 'vegan', 'gluten', 'lactose', 'diabetic', 'kosher', 'halal',
-            # Family composition
-            'family of', 'my wife', 'my husband', 'my kids', 'my children', 'my son', 'my daughter',
-            # Budget constraints
-            'budget is', 'budget of', 'can spend', 'maximum', 'limit',
-            # Accessibility needs
-            'wheelchair', 'accessibility', 'disability',
-            # Location
-            'live in', 'from',
-            # Major preferences
-            'always prefer', 'never', 'hate when', 'love when'
-        ]
-
-        conversation_text = ' '.join([msg['text'] for msg in messages]).lower()
-        return any(keyword in conversation_text for keyword in significant_keywords)
 
     def _format_conversation_for_extraction(self, messages) -> str:
         """Format conversation messages for memory extraction."""
@@ -530,10 +464,17 @@ Respond with ONLY "YES" or "NO"."""
             r'family of (\d+)',
             r'(?:wife|husband|spouse) is (\w+)',
             r'prefer (\w+(?:\s+\w+)*)',
+            r'like (\w+(?:\s+\w+)*)',
+            r'love (\w+(?:\s+\w+)*)',
+            r'hate (\w+(?:\s+\w+)*)',
             r'budget (?:is|of) ([\d,]+)',
             r'allergic to (\w+)',
             r'live in (\w+)',
             r'work (?:as|in) (\w+)',
+            r'window (\w+)',
+            r'aisle (\w+)',
+            r'flying (\w+)',
+            r'(\w+) seat',
         ]
 
         key_phrases = []
@@ -543,9 +484,10 @@ Respond with ONLY "YES" or "NO"."""
 
         # Also extract noun phrases (simple approach)
         words = re.findall(r'\b\w+\b', text_lower)
+        # Don't filter out preference words - they're important for identifying user preferences!
         important_words = [word for word in words if len(word) > 3 and word not in [
             'that', 'this', 'with', 'have', 'will', 'would', 'could', 'should',
-            'going', 'want', 'need', 'like', 'love', 'hate', 'prefer'
+            'going', 'want', 'need'  # Removed 'like', 'love', 'hate', 'prefer' from exclusion list
         ]]
 
         # Take combinations of important words

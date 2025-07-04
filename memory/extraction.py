@@ -216,7 +216,7 @@ WHAT NOT TO EXTRACT:
 - Overly specific details that won't be useful later
 
 QUALITY STANDARDS:
-- Be SELECTIVE - only extract information that would significantly improve future assistance
+- Be smart - extract information that would improve future assistance
 - Prefer clear, actionable facts over minor details
 - Each extracted fact should be self-contained and valuable
 - Focus on information that has lasting relevance
@@ -258,9 +258,9 @@ NOW ANALYZE THE ACTUAL CONVERSATIONAL INPUT BELOW:
 
 INSTRUCTIONS:
 1. Carefully read through the conversational input
-2. Identify only SIGNIFICANT information that would improve future assistance
-3. Be selective and conservative - avoid extracting minor or temporary details
-4. For each fact, ensure it's truly valuable and determine confidence level
+2. Identify information that would improve future assistance
+3. Be smart - avoid extracting minor or temporary details
+4. For each fact, ensure it's valuable and determine confidence level
 5. Provide clear reasoning for your extraction decisions
 6. If no significant new information is present, return empty "extracted_facts" array
 
@@ -283,7 +283,7 @@ Respond with a JSON object in this exact format:
   "reasoning": "Overall summary of extraction decisions and approach"
 }}
 
-CRITICAL: Only extract information that is NEW, SIGNIFICANT, and NOT already captured in existing memories.
+CRITICAL: Only extract information that is NEW, and NOT already captured in existing memories.
 
 EXTRACTION GUIDELINES:
 - If existing memories already capture the information, extract NOTHING
@@ -298,12 +298,18 @@ SKIP (not significant enough):
 - "That sounds interesting" → EXTRACT: [] (conversational response)
 - "Thanks for the help" → EXTRACT: [] (politeness)
 
+Take into account the type of work this assistant it trying to accomplish. For example: 
+for a coding assistant, you want to extract preferences and things relating to coding
+for a travel assistant, you want to extract memories relating to travel.
+For a customer service assistant, you want to extract memories relating to the user's needs and preferences.
+Etc. 
+
 EXTRACT (significant new information):
 - "I'm vegetarian" → EXTRACT: ["User is vegetarian"] (important dietary restriction)
 - "My family of 4 is planning a trip to Europe" → EXTRACT: ["User has family of 4", "User is planning Europe trip"]
 - "I have a $2000 budget for hotels" → EXTRACT: ["User has $2000 hotel budget"] (important constraint)
 
-Be highly selective and focus only on information that would significantly improve future assistance.
+Be selective and focus only on information that would improve future assistance.
 
 **FINAL REMINDER**: Only extract information from the actual conversational input marked above. Do NOT extract any information from the examples, reference material, or instructional text in this prompt."""
 
@@ -450,14 +456,15 @@ Be highly selective and focus only on information that would significantly impro
             Dictionary with extracted facts and filtering information, or None if failed
         """
         try:
-            # Use Tier 2 LLM for memory extraction
+            # Use Tier 1 LLM for memory extraction (better performance)
             llm_manager = get_llm_manager()
-            tier2_client = llm_manager.get_tier2_client()
+            tier1_client = llm_manager.get_tier1_client()
 
-            response = tier2_client.chat_completion(
+            response = tier1_client.chat_completion(
                 messages=[
                     {"role": "user", "content": extraction_prompt}
                 ],
+                operation_type='memory_extraction',
                 bypass_cache=True,  # Memory extraction is highly context-dependent and accuracy-critical
                 temperature=0.2,  # Low temperature for consistent extraction
                 max_tokens=1500   # Allow for detailed extraction

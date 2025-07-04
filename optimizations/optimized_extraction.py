@@ -26,7 +26,22 @@ class OptimizedMemoryExtraction:
     def __init__(self, memory_core):
         """Initialize with memory core for storage operations."""
         self.memory_core = memory_core
-    
+
+    def extract_and_store_memories(self,
+                                 raw_input: str,
+                                 context_prompt: str,
+                                 extraction_examples: Optional[List[Dict[str, str]]] = None,
+                                 apply_grounding: bool = True,
+                                 existing_memories: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """Standard interface for memory extraction - delegates to optimized version."""
+        return self.extract_and_store_memories_optimized(
+            raw_input=raw_input,
+            context_prompt=context_prompt,
+            extraction_examples=extraction_examples,
+            apply_grounding=apply_grounding,
+            existing_memories=existing_memories
+        )
+
     def extract_and_store_memories_optimized(self,
                                            raw_input: str,
                                            context_prompt: str,
@@ -165,11 +180,11 @@ Your response:"""
         try:
             # Use Tier 2 LLM for memory extraction
             llm_manager = get_llm_manager()
-            tier2_client = llm_manager.get_tier2_client()
+            tier1_client = llm_manager.get_tier1_client()
 
             # Use caching if available
-            if hasattr(tier2_client, 'chat_completion'):
-                response = tier2_client.chat_completion(
+            if hasattr(tier1_client, 'chat_completion'):
+                response = tier1_client.chat_completion(
                     messages=[
                         {"role": "user", "content": extraction_prompt}
                     ],
@@ -179,7 +194,7 @@ Your response:"""
                     max_tokens=1000
                 )
             else:
-                response = tier2_client.chat_completion(
+                response = tier1_client.chat_completion(
                     messages=[
                         {"role": "user", "content": extraction_prompt}
                     ],
@@ -303,10 +318,10 @@ Your response:"""
 
         try:
             llm_manager = get_llm_manager()
-            tier2_client = llm_manager.get_tier2_client()
+            tier1_client = llm_manager.get_tier1_client()
             
-            if hasattr(tier2_client, 'chat_completion'):
-                response = tier2_client.chat_completion(
+            if hasattr(tier1_client, 'chat_completion'):
+                response = tier1_client.chat_completion(
                     messages=[{"role": "user", "content": batch_prompt}],
                     operation_type='extraction_batch',
                     cache_context={'input_count': len(inputs)},
@@ -314,7 +329,7 @@ Your response:"""
                     max_tokens=500 * len(inputs)
                 )
             else:
-                response = tier2_client.chat_completion(
+                response = tier1_client.chat_completion(
                     messages=[{"role": "user", "content": batch_prompt}],
                     temperature=0.2,
                     max_tokens=500 * len(inputs)

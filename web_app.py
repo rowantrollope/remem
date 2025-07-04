@@ -136,7 +136,6 @@ app_config = {
 class MemoryStoreRequest(BaseModel):
     text: str = Field(..., description="Memory text to store")
     apply_grounding: bool = Field(True, description="Whether to apply contextual grounding")
-    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to use")
 
 class MemorySearchRequest(BaseModel):
     query: str = Field(..., description="Search query text")
@@ -144,7 +143,6 @@ class MemorySearchRequest(BaseModel):
     filter: Optional[str] = Field(None, description="Filter expression for Redis VSIM command")
     optimize_query: bool = Field(False, description="Whether to optimize query for embedding search")
     min_similarity: float = Field(0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold")
-    vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to search")
 
 class MemoryDeleteRequest(BaseModel):
     vectorstore_name: Optional[str] = Field(None, description="Name of the vectorstore to delete from")
@@ -329,6 +327,39 @@ def init_memory_agent():
         return False
 
 # =============================================================================
+# API UTILITIES AND VALIDATION
+# =============================================================================
+
+# Reserved vectorstore names that cannot be used by users
+RESERVED_VECTORSTORE_NAMES = ["all", "info", "search", "context", "health", "metrics", "config"]
+
+def validate_vectorstore_name(name: str) -> None:
+    """Validate that vectorstore name is not reserved.
+    
+    Args:
+        name: Vectorstore name to validate
+        
+    Raises:
+        HTTPException: If name is reserved
+    """
+    if name.lower() in RESERVED_VECTORSTORE_NAMES:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"'{name}' is a reserved name. Reserved names: {', '.join(RESERVED_VECTORSTORE_NAMES)}"
+        )
+
+def get_vectorstore_name(vectorstore_param: Optional[str] = None) -> str:
+    """Get vectorstore name with fallback to default.
+    
+    Args:
+        vectorstore_param: Optional vectorstore name from URL parameter
+        
+    Returns:
+        Vectorstore name (explicit or default)
+    """
+    return vectorstore_param or app_config["redis"]["vectorset_key"]
+
+# =============================================================================
 # NEME API - Fundamental Memory Operations (Inspired by Minsky's "Nemes")
 # =============================================================================
 #
@@ -345,13 +376,34 @@ def init_memory_agent():
 # =============================================================================
 
 @app.post('/api/memory')
-async def api_store_neme(request: MemoryStoreRequest):
-    """Store a new atomic memory (Neme).
+async def api_store_neme_default(request: MemoryStoreRequest):
+    """Store a new atomic memory (Neme) in the default vectorstore.
 
     In Minsky's framework, a Neme is a fundamental unit of memory - an atomic
     piece of knowledge that can be contextually grounded and later recalled
     by higher-level cognitive processes.
 
+    Returns:
+        JSON with success status, memory_id, message, and grounding information
+    """
+    return await _store_memory_impl(request, vectorstore_name=None)
+
+@app.post('/api/memory/{vectorstore_name}')
+async def api_store_neme_vectorstore(vectorstore_name: str, request: MemoryStoreRequest):
+    """Store a new atomic memory (Neme) in a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to store in
+
+    Returns:
+        JSON with success status, memory_id, message, and grounding information
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _store_memory_impl(request, vectorstore_name=vectorstore_name)
+
+async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Optional[str] = None):
+    """Implementation for storing memories with vectorstore support.
+    
     Returns:
         JSON with success status, memory_id, message, and grounding information:
         - success (bool): Whether the operation succeeded
@@ -368,14 +420,15 @@ async def api_store_neme(request: MemoryStoreRequest):
     try:
         memory_text = request.text.strip()
         apply_grounding = request.apply_grounding
-        vectorstore_name = request.vectorstore_name
+        
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         if not memory_text:
             raise HTTPException(status_code=400, detail='Memory text is required')
 
         print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
-        if vectorstore_name:
-            print(f"📦 Vectorstore: {vectorstore_name}")
+        print(f"📦 Vectorstore: {final_vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
@@ -384,7 +437,7 @@ async def api_store_neme(request: MemoryStoreRequest):
         storage_result = memory_agent.memory_agent.store_memory(
             memory_text,
             apply_grounding=apply_grounding,
-            vectorset_key=vectorstore_name
+            vectorset_key=final_vectorstore_name
         )
 
         # Prepare response with grounding information
@@ -397,7 +450,7 @@ async def api_store_neme(request: MemoryStoreRequest):
             'grounding_applied': storage_result['grounding_applied'],
             'tags': storage_result['tags'],
             'created_at': storage_result['created_at'],
-            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
+            'vectorstore_name': final_vectorstore_name
         }
 
         # Include grounding information if available
@@ -416,12 +469,33 @@ async def api_store_neme(request: MemoryStoreRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/api/memory/search')
-async def api_search_nemes(request: MemorySearchRequest):
-    """Search atomic memories (Nemes) using vector similarity.
+async def api_search_nemes_default(request: MemorySearchRequest):
+    """Search atomic memories (Nemes) in the default vectorstore using vector similarity.
 
     This performs direct vector similarity search across stored Nemes,
     returning the most relevant atomic memories for a given query.
 
+    Returns:
+        JSON with success status, memories array, count, and memory breakdown by type
+    """
+    return await _search_memories_impl(request, vectorstore_name=None)
+
+@app.post('/api/memory/{vectorstore_name}/search')
+async def api_search_nemes_vectorstore(vectorstore_name: str, request: MemorySearchRequest):
+    """Search atomic memories (Nemes) in a specific vectorstore using vector similarity.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to search in
+
+    Returns:
+        JSON with success status, memories array, count, and memory breakdown by type
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _search_memories_impl(request, vectorstore_name=vectorstore_name)
+
+async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: Optional[str] = None):
+    """Implementation for searching memories with vectorstore support.
+    
     Returns:
         JSON with success status, memories array, count, and memory breakdown by type
     """
@@ -431,14 +505,15 @@ async def api_search_nemes(request: MemorySearchRequest):
         filter_expr = request.filter
         optimize_query = request.optimize_query
         min_similarity = request.min_similarity
-        vectorstore_name = request.vectorstore_name
+        
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         if not query:
             raise HTTPException(status_code=400, detail='Query is required')
 
         print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
-        if vectorstore_name:
-            print(f"📦 Vectorstore: {vectorstore_name}")
+        print(f"📦 Vectorstore: {final_vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
         if optimize_query:
@@ -455,15 +530,15 @@ async def api_search_nemes(request: MemorySearchRequest):
                 search_query = validation_result.get("embedding_query") or validation_result["content"]
                 print(f"🔍 Using optimized search query: '{search_query}'")
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+                    search_query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
                 )
             else:
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+                    query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
                 )
         else:
             search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
+                query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
             )
 
         memories = search_result['memories']
@@ -477,7 +552,7 @@ async def api_search_nemes(request: MemorySearchRequest):
             'memories': memories,
             'count': len(memories),
             'filtering_info': filtering_info,
-            'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
+            'vectorstore_name': final_vectorstore_name
         }
 
     except HTTPException:
@@ -486,9 +561,30 @@ async def api_search_nemes(request: MemorySearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get('/api/memory')
-async def api_get_neme_info():
-    """Get atomic memory (Neme) statistics and system information.
+async def api_get_neme_info_default():
+    """Get atomic memory (Neme) statistics and system information for the default vectorstore.
 
+    Returns:
+        JSON with memory count, vector dimension, embedding model, and system info
+    """
+    return await _get_memory_info_impl(vectorstore_name=None)
+
+@app.get('/api/memory/{vectorstore_name}')
+async def api_get_neme_info_vectorstore(vectorstore_name: str):
+    """Get atomic memory (Neme) statistics and system information for a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to get info for
+
+    Returns:
+        JSON with memory count, vector dimension, embedding model, and system info
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _get_memory_info_impl(vectorstore_name=vectorstore_name)
+
+async def _get_memory_info_impl(vectorstore_name: Optional[str] = None):
+    """Implementation for getting memory info with vectorstore support.
+    
     Returns:
         JSON with memory count, vector dimension, embedding model, and system info
     """
@@ -496,11 +592,17 @@ async def api_get_neme_info():
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
+
         # Get comprehensive memory information from underlying agent
         memory_info = memory_agent.memory_agent.get_memory_info()
 
         if 'error' in memory_info:
             raise HTTPException(status_code=500, detail=memory_info['error'])
+
+        # Add vectorstore name to response
+        memory_info['vectorstore_name'] = final_vectorstore_name
 
         return {
             'success': True,
@@ -513,13 +615,34 @@ async def api_get_neme_info():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete('/api/memory/{memory_id}')
-async def api_delete_neme(memory_id: str = Path(..., description="UUID of the memory to delete"), request: Optional[MemoryDeleteRequest] = None):
-    """Delete a specific atomic memory (Neme) by ID.
+async def api_delete_neme_default(memory_id: str = Path(..., description="UUID of the memory to delete")):
+    """Delete a specific atomic memory (Neme) by ID from the default vectorstore.
 
     Args:
         memory_id: UUID of the memory to delete
-        request: Optional request body with vectorstore_name
 
+    Returns:
+        JSON with success status and deletion details
+    """
+    return await _delete_memory_impl(memory_id, vectorstore_name=None)
+
+@app.delete('/api/memory/{vectorstore_name}/{memory_id}')
+async def api_delete_neme_vectorstore(vectorstore_name: str, memory_id: str):
+    """Delete a specific atomic memory (Neme) by ID from a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to delete from
+        memory_id: UUID of the memory to delete
+
+    Returns:
+        JSON with success status and deletion details
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _delete_memory_impl(memory_id, vectorstore_name=vectorstore_name)
+
+async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = None):
+    """Implementation for deleting a memory with vectorstore support.
+    
     Returns:
         JSON with success status and deletion details
     """
@@ -527,12 +650,11 @@ async def api_delete_neme(memory_id: str = Path(..., description="UUID of the me
         if not memory_id or not memory_id.strip():
             raise HTTPException(status_code=400, detail='Memory ID is required')
 
-        # Get vectorstore_name from request body if provided
-        vectorstore_name = request.vectorstore_name if request else None
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
-        if vectorstore_name:
-            print(f"📦 Vectorstore: {vectorstore_name}")
+        print(f"📦 Vectorstore: {final_vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
@@ -540,7 +662,7 @@ async def api_delete_neme(memory_id: str = Path(..., description="UUID of the me
 
         success = memory_agent.memory_agent.delete_memory(
             memory_id.strip(),
-            vectorset_key=vectorstore_name
+            vectorset_key=final_vectorstore_name
         )
 
         if success:
@@ -548,7 +670,7 @@ async def api_delete_neme(memory_id: str = Path(..., description="UUID of the me
                 'success': True,
                 'message': f'Neme {memory_id} deleted successfully',
                 'memory_id': memory_id,
-                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
+                'vectorstore_name': final_vectorstore_name
             }
         else:
             raise HTTPException(
@@ -561,29 +683,46 @@ async def api_delete_neme(memory_id: str = Path(..., description="UUID of the me
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete('/api/memory')
-async def api_delete_all_nemes(request: Optional[MemoryDeleteRequest] = None):
-    """Clear all atomic memories (Nemes) from the system.
-
-    Args:
-        request: Optional request body with vectorstore_name
+@app.delete('/api/memory/all')
+async def api_delete_all_nemes_default():
+    """Clear all atomic memories (Nemes) from the default vectorstore.
 
     Returns:
         JSON with success status, deletion count, and operation details
     """
+    return await _delete_all_memories_impl(vectorstore_name=None)
+
+@app.delete('/api/memory/{vectorstore_name}/all')
+async def api_delete_all_nemes_vectorstore(vectorstore_name: str):
+    """Clear all atomic memories (Nemes) from a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to clear
+
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
+
+async def _delete_all_memories_impl(vectorstore_name: Optional[str] = None):
+    """Implementation for deleting all memories with vectorstore support.
+    
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
     try:
-        # Get vectorstore_name from request body if provided
-        vectorstore_name = request.vectorstore_name if request else None
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         print("🗑️ NEME API: Clearing all atomic memories...")
-        if vectorstore_name:
-            print(f"📦 Vectorstore: {vectorstore_name}")
+        print(f"📦 Vectorstore: {final_vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        result = memory_agent.memory_agent.clear_all_memories(vectorset_key=vectorstore_name)
+        result = memory_agent.memory_agent.clear_all_memories(vectorset_key=final_vectorstore_name)
 
         if result['success']:
             return {
@@ -591,7 +730,7 @@ async def api_delete_all_nemes(request: Optional[MemoryDeleteRequest] = None):
                 'message': result['message'],
                 'memories_deleted': result['memories_deleted'],
                 'vectorset_existed': result['vectorset_existed'],
-                'vectorstore_name': vectorstore_name or app_config["redis"]["vectorset_key"]
+                'vectorstore_name': final_vectorstore_name
             }
         else:
             raise HTTPException(
@@ -605,8 +744,8 @@ async def api_delete_all_nemes(request: Optional[MemoryDeleteRequest] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/api/memory/context')
-async def api_set_neme_context(request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
-    """Set current context for memory grounding.
+async def api_set_neme_context_default(request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
+    """Set current context for memory grounding in the default vectorstore.
 
     Args:
         request: Context parameters (location, activity, people_present)
@@ -615,9 +754,35 @@ async def api_set_neme_context(request: ContextSetRequest, additional_context: D
     Returns:
         JSON with success status and updated context
     """
+    return await _set_context_impl(request, additional_context, vectorstore_name=None)
+
+@app.post('/api/memory/{vectorstore_name}/context')
+async def api_set_neme_context_vectorstore(vectorstore_name: str, request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
+    """Set current context for memory grounding in a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to set context for
+        request: Context parameters (location, activity, people_present)
+        additional_context: Additional fields will be stored as environment context
+
+    Returns:
+        JSON with success status and updated context
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _set_context_impl(request, additional_context, vectorstore_name=vectorstore_name)
+
+async def _set_context_impl(request: ContextSetRequest, additional_context: Dict[str, Any], vectorstore_name: Optional[str] = None):
+    """Implementation for setting context with vectorstore support.
+    
+    Returns:
+        JSON with success status and updated context
+    """
     try:
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         # Extract context parameters
         location = request.location
@@ -628,6 +793,7 @@ async def api_set_neme_context(request: ContextSetRequest, additional_context: D
         environment_context = additional_context
 
         print(f"🌍 NEME API: Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
+        print(f"📦 Vectorstore: {final_vectorstore_name}")
 
         # Set context on underlying memory agent
         memory_agent.memory_agent.set_context(
@@ -645,7 +811,8 @@ async def api_set_neme_context(request: ContextSetRequest, additional_context: D
                 'activity': activity,
                 'people_present': people_present,
                 'environment': environment_context
-            }
+            },
+            'vectorstore_name': final_vectorstore_name
         }
 
     except HTTPException:
@@ -654,9 +821,30 @@ async def api_set_neme_context(request: ContextSetRequest, additional_context: D
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get('/api/memory/context')
-async def api_get_neme_context():
-    """Get current context information for memory grounding.
+async def api_get_neme_context_default():
+    """Get current context information for memory grounding from the default vectorstore.
 
+    Returns:
+        JSON with success status and current context (temporal, spatial, social, environmental)
+    """
+    return await _get_context_impl(vectorstore_name=None)
+
+@app.get('/api/memory/{vectorstore_name}/context')
+async def api_get_neme_context_vectorstore(vectorstore_name: str):
+    """Get current context information for memory grounding from a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to get context for
+
+    Returns:
+        JSON with success status and current context (temporal, spatial, social, environmental)
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _get_context_impl(vectorstore_name=vectorstore_name)
+
+async def _get_context_impl(vectorstore_name: Optional[str] = None):
+    """Implementation for getting context with vectorstore support.
+    
     Returns:
         JSON with success status and current context (temporal, spatial, social, environmental)
     """
@@ -664,17 +852,46 @@ async def api_get_neme_context():
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
+        # Use vectorstore from URL path, fallback to default
+        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
+
         current_context = memory_agent.memory_agent.core._get_current_context()
 
         return {
             'success': True,
-            'context': current_context
+            'context': current_context,
+            'vectorstore_name': final_vectorstore_name
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# BACKWARD COMPATIBILITY - DEPRECATED ENDPOINTS
+# =============================================================================
+# 
+# These endpoints maintain backward compatibility with the old API design.
+# They are deprecated and will be removed in a future version.
+# Client applications should migrate to the new vectorstore-aware endpoints.
+
+# DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
+@app.delete('/api/memory')  
+async def api_delete_all_nemes_legacy(request: Optional[MemoryDeleteRequest] = None):
+    """DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
+    
+    Clear all atomic memories (Nemes) from the system.
+    
+    Args:
+        request: Optional request body with vectorstore_name
+        
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
+    # Get vectorstore_name from request body if provided
+    vectorstore_name = request.vectorstore_name if request else None
+    return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
 
 # =============================================================================
 # K-LINE API - Reflective Operations (Inspired by Minsky's "K-lines")
@@ -1007,147 +1224,165 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     """Handle message processing for sessions with memory enabled."""
     if not memory_agent:
         raise HTTPException(status_code=500, detail='Memory agent not initialized but session requires memory')
-
-    # Create user message object
-    user_message_obj = {
-        'role': 'user',
-        'content': user_message,
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    }
     
-    # Add user message to session messages for conversation history
-    session['messages'].append(user_message_obj)
-
-    # Add to conversation buffer for memory extraction
-    if 'conversation_buffer' not in session:
-        session['conversation_buffer'] = []
-
-    session['conversation_buffer'].append(user_message_obj)
-
-    # Retrieve relevant memories for context using advanced filtering with embedding optimization
-    relevant_memories = []
+    # Temporarily disable caching for agent sessions to ensure fresh memory retrieval
+    # Store original processing module and replace with non-cached version during session
+    original_processing = None
+    if hasattr(memory_agent.memory_agent, 'processing'):
+        original_processing = memory_agent.memory_agent.processing
+        # Import the non-optimized version
+        from memory.processing import MemoryProcessing
+        memory_agent.memory_agent.processing = MemoryProcessing()
+        print("🚫 Temporarily disabled memory processing cache for agent session")
+    
     try:
-        print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}' (top_k: {top_k})")
-
-        # Use embedding optimization for better vector similarity search
-        validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(user_message)
-
-        if validation_result["type"] == "search":
-            # Use the embedding-optimized query for vector search
-            search_query = validation_result.get("embedding_query") or validation_result["content"]
-            print(f"2b) Using optimized search query: '{search_query}'")
-
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                query=search_query,
-                top_k=top_k,
-                min_similarity=min_similarity
-            )
-            memory_results = search_result['memories']
-            filtering_info = search_result['filtering_info']
-        else:
-            # For help queries, still search but with original message
-            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                query=user_message,
-                top_k=top_k,
-                min_similarity=min_similarity
-            )
-            memory_results = search_result['memories']
-            filtering_info = search_result['filtering_info']
-
-        if memory_results:
-            print(f"3) Found {len(memory_results)} memories, sending directly to LLM (no pre-filtering)")
-            relevant_memories = memory_results
-        else:
-            print(f"3) No relevant memories found")
-            relevant_memories = []
-    except Exception as e:
-        print(f"⚠️ Memory search failed: {e}")
-
-    # Prepare enhanced system prompt with memory context
-    enhanced_system_prompt = session['system_prompt']
-    if relevant_memories:
-        memory_context = "\n\n==== MEMORY CONTEXT ====\n"
-        memory_context += "Here are potentially relevant memories from previous interactions:\n\n"
-        for i, memory in enumerate(relevant_memories, 1):
-            # Include similarity score and timestamp for context
-            score_percent = memory.get('score', 0) * 100
-            timestamp = memory.get('formatted_time', 'Unknown time')
-            memory_context += f"Memory {i} (Similarity: {score_percent:.1f}%, {timestamp}):\n{memory['text']}\n\n"
-
-        memory_context += "INSTRUCTIONS FOR USING MEMORIES:\n"
-        memory_context += "- Only use memories that are directly relevant to the current request\n"
-        memory_context += "- Ignore memories that don't relate to the user's current question or need\n"
-        memory_context += "- Use relevant memories to provide personalized, contextual responses\n"
-        memory_context += "- Consider the user's preferences, constraints, and past experiences when applicable\n"
-        memory_context += "- If no memories are relevant, respond based on the current conversation only\n"
-        memory_context += "==== END MEMORY CONTEXT ====\n"
-        enhanced_system_prompt += memory_context
-
-    # Prepare messages for LLM
-    llm_messages = [
-        {'role': 'system', 'content': enhanced_system_prompt}
-    ]
-
-    # Add recent conversation history (limit to last 10 messages to avoid token limits)
-    recent_messages = session['messages'][-10:]
-    for msg in recent_messages:
-        llm_messages.append({
-            'role': msg['role'],
-            'content': msg['content']
-        })
-
-    # Get response from Tier 1 LLM (primary conversational)
-    try:
-        llm_manager = get_llm_manager()
-        tier1_client = llm_manager.get_tier1_client()
-        print(f"4) Sending message to Tier 1 LLM: {llm_messages}")
-        response = tier1_client.chat_completion(
-            messages=llm_messages,
-            temperature=session['config'].get('temperature', 0.7),
-            max_tokens=session['config'].get('max_tokens', 1000)
-        )
-
-        if stream:
-            # TODO: Implement streaming response
-            raise HTTPException(status_code=501, detail='Streaming not yet implemented')
-
-        assistant_response = response['content']
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
-
-    # Add assistant response to session and buffer
-    assistant_message = {
-        'role': 'assistant',
-        'content': assistant_response,
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    }
-    session['messages'].append(assistant_message)
-    session['conversation_buffer'].append(assistant_message)
-    session['last_activity'] = datetime.now(timezone.utc).isoformat()
-
-    # Check if we should extract memories (only if store_memory is True)
-    if store_memory:
-        _check_and_extract_memories(session_id, session)
-    else:
-        print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
-
-    response_data = {
-        'success': True,
-        'session_id': session_id,
-        'message': assistant_response,
-        'conversation_length': len(session['messages']),
-        'timestamp': assistant_message['timestamp']
-    }
-
-    # Add memory info if memories were used
-    if relevant_memories:
-        response_data['memory_context'] = {
-            'memories_used': len(relevant_memories),
-            'memories': relevant_memories,  # Include all memory details for rendering
-            'filtering_info': filtering_info if 'filtering_info' in locals() else None
+        # Create user message object
+        user_message_obj = {
+            'role': 'user',
+            'content': user_message,
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
-    print(f"7) memories_used: {len(relevant_memories)}")
-    return response_data
+        
+        # Add user message to session messages for conversation history
+        session['messages'].append(user_message_obj)
+
+        # Add to conversation buffer for memory extraction
+        if 'conversation_buffer' not in session:
+            session['conversation_buffer'] = []
+
+        session['conversation_buffer'].append(user_message_obj)
+
+        # Retrieve relevant memories for context using advanced filtering with embedding optimization
+        relevant_memories = []
+        try:
+            print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}' (top_k: {top_k})")
+
+            # Use embedding optimization for better vector similarity search
+            validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(user_message)
+
+            if validation_result["type"] == "search":
+                # Use the embedding-optimized query for vector search
+                search_query = validation_result.get("embedding_query") or validation_result["content"]
+                print(f"2b) Using optimized search query: '{search_query}'")
+
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                    query=search_query,
+                    top_k=top_k,
+                    min_similarity=min_similarity
+                )
+                memory_results = search_result['memories']
+                filtering_info = search_result['filtering_info']
+            else:
+                # For help queries, still search but with original message
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                    query=user_message,
+                    top_k=top_k,
+                    min_similarity=min_similarity
+                )
+                memory_results = search_result['memories']
+                filtering_info = search_result['filtering_info']
+
+            if memory_results:
+                print(f"3) Found {len(memory_results)} memories, sending directly to LLM (no pre-filtering)")
+                relevant_memories = memory_results
+            else:
+                print(f"3) No relevant memories found")
+                relevant_memories = []
+        except Exception as e:
+            print(f"⚠️ Memory search failed: {e}")
+
+        # Prepare enhanced system prompt with memory context
+        enhanced_system_prompt = session['system_prompt']
+        if relevant_memories:
+            memory_context = "\n\n==== MEMORY CONTEXT ====\n"
+            memory_context += "Here are potentially relevant memories from previous interactions:\n\n"
+            for i, memory in enumerate(relevant_memories, 1):
+                # Include similarity score and timestamp for context
+                score_percent = memory.get('score', 0) * 100
+                timestamp = memory.get('formatted_time', 'Unknown time')
+                memory_context += f"Memory {i} (Similarity: {score_percent:.1f}%, {timestamp}):\n{memory['text']}\n\n"
+
+            memory_context += "INSTRUCTIONS FOR USING MEMORIES:\n"
+            memory_context += "- Only use memories that are directly relevant to the current request\n"
+            memory_context += "- Ignore memories that don't relate to the user's current question or need\n"
+            memory_context += "- Use relevant memories to provide personalized, contextual responses\n"
+            memory_context += "- Consider the user's preferences, constraints, and past experiences when applicable\n"
+            memory_context += "- If no memories are relevant, respond based on the current conversation only\n"
+            memory_context += "==== END MEMORY CONTEXT ====\n"
+            enhanced_system_prompt += memory_context
+
+        # Prepare messages for LLM
+        llm_messages = [
+            {'role': 'system', 'content': enhanced_system_prompt}
+        ]
+
+        # Add recent conversation history (limit to last 10 messages to avoid token limits)
+        recent_messages = session['messages'][-10:]
+        for msg in recent_messages:
+            llm_messages.append({
+                'role': msg['role'],
+                'content': msg['content']
+            })
+
+        # Get response from Tier 1 LLM (primary conversational)
+        try:
+            llm_manager = get_llm_manager()
+            tier1_client = llm_manager.get_tier1_client()
+            print(f"4) Sending message to Tier 1 LLM: {llm_messages}")
+            response = tier1_client.chat_completion(
+                messages=llm_messages,
+                temperature=session['config'].get('temperature', 0.7),
+                max_tokens=session['config'].get('max_tokens', 1000),
+                bypass_cache=True  # Disable cache for agent sessions to ensure fresh memory retrieval
+            )
+
+            if stream:
+                # TODO: Implement streaming response
+                raise HTTPException(status_code=501, detail='Streaming not yet implemented')
+
+            assistant_response = response['content']
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
+
+        # Add assistant response to session and buffer
+        assistant_message = {
+            'role': 'assistant',
+            'content': assistant_response,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        session['messages'].append(assistant_message)
+        session['conversation_buffer'].append(assistant_message)
+        session['last_activity'] = datetime.now(timezone.utc).isoformat()
+
+        # Check if we should extract memories (only if store_memory is True)
+        if store_memory:
+            _check_and_extract_memories(session_id, session)
+        else:
+            print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
+
+        response_data = {
+            'success': True,
+            'session_id': session_id,
+            'message': assistant_response,
+            'conversation_length': len(session['messages']),
+            'timestamp': assistant_message['timestamp']
+        }
+
+        # Add memory info if memories were used
+        if relevant_memories:
+            response_data['memory_context'] = {
+                'memories_used': len(relevant_memories),
+                'memories': relevant_memories,  # Include all memory details for rendering
+                'filtering_info': filtering_info if 'filtering_info' in locals() else None
+            }
+        print(f"7) memories_used: {len(relevant_memories)}")
+        return response_data
+    
+    finally:
+        # Restore original processing module if it was replaced
+        if original_processing is not None:
+            memory_agent.memory_agent.processing = original_processing
+            print("✅ Restored original memory processing module")
 
 
 def _check_and_extract_memories(session_id, session):
@@ -1164,11 +1399,6 @@ def _check_and_extract_memories(session_id, session):
     latest_user_message = recent_user_messages[-1]
 
     print(f"4) Extracting memories from: '{latest_user_message['content'][:60]}{'...' if len(latest_user_message['content']) > 60 else ''}'")
-
-    # Check if this message contains extractable information
-    if not _contains_extractable_info([latest_user_message]):
-        print(f"5) No extractable information found - skipping extraction")
-        return
 
     try:
         # Format the latest user message for extraction
@@ -1213,96 +1443,7 @@ def _check_and_extract_memories(session_id, session):
         print(f"⚠️ Memory extraction failed: {e}")
 
 
-def _contains_extractable_info(messages):
-    """Check if messages contain information worth extracting using LLM evaluation."""
-    try:
-        llm_manager = get_llm_manager()
-    except:
-        # Fallback to keyword-based approach if LLM manager not available
-        return _contains_extractable_info_fallback(messages)
 
-    # Combine messages into conversation text
-    conversation_text = ' '.join([msg['content'] for msg in messages])
-
-    # Skip very short messages
-    if len(conversation_text.strip()) < 10:
-        return False
-
-    # Use LLM to evaluate if the text contains extractable information
-    try:
-        evaluation_prompt = f"""You are an intelligent memory evaluation system. Your task is to determine if the following conversational text contains information that would be valuable to remember for future interactions.
-
-VALUABLE INFORMATION INCLUDES:
-- Personal preferences (likes, dislikes, habits)
-- Constraints and requirements (budget, time, accessibility needs)
-- Personal details (family, dietary restrictions, important dates)
-- Factual information about people, places, or things
-- Goals and intentions
-- Important contextual details
-
-STRICTLY IGNORE:
-- Temporary information (current weather, today's schedule, immediate tasks)
-- Conversational filler or pleasantries ("Hi there", "How are you?")
-- General questions without personal context ("What's the best way to...")
-- Information requests that don't reveal user preferences
-- Time-sensitive information that won't be relevant later
-- Assistant responses or suggestions
-
-CONVERSATIONAL TEXT TO EVALUATE:
-"{conversation_text}"
-
-Respond with ONLY "YES" if the text contains valuable information worth remembering, or "NO" if it doesn't. Do not include any explanation."""
-
-        # Use Tier 2 LLM for memory extraction evaluation
-        # Use specific operation type to avoid false semantic cache hits
-        llm_manager = get_llm_manager()
-        tier2_client = llm_manager.get_tier2_client()
-
-        response = tier2_client.chat_completion(
-            messages=[{"role": "user", "content": evaluation_prompt}],
-            operation_type='memory_extraction_evaluation',  # Specific operation type for memory evaluation
-            cache_context={'content_length': len(conversation_text)},  # Add unique context
-            temperature=0.1,  # Low temperature for consistent evaluation
-            max_tokens=10     # We only need YES or NO
-        )
-
-        result = response['content'].strip().upper()
-        
-        # Debug logging to help track evaluation decisions
-        cache_hit = response.get('_cache_hit', False)
-        similarity = response.get('_semantic_similarity')
-        
-        decision = result == "YES"
-        print(f"🔍 Memory evaluation: '{conversation_text[:30]}...' → {result} (cache: {cache_hit}" + 
-              (f", similarity: {similarity:.3f}" if similarity else "") + ")")
-        
-        return decision
-
-    except Exception as e:
-        print(f"⚠️ LLM evaluation failed, falling back to keyword approach: {e}")
-        return _contains_extractable_info_fallback(messages)
-
-
-def _contains_extractable_info_fallback(messages):
-    """Fallback keyword-based approach for checking extractable information."""
-    extractable_keywords = [
-        'prefer', 'like', 'love', 'hate', 'dislike', 'always', 'never', 'usually',
-        'budget', 'family', 'wife', 'husband', 'kids', 'children', 'allergic', 'allergy',
-        'need', 'want', 'can\'t', 'cannot', 'must', 'have to', 'dietary', 'vegetarian',
-        'vegan', 'gluten', 'accessibility', 'wheelchair', 'mobility', 'window seat',
-        'aisle seat', 'michelin', 'restaurant', 'hotel', 'flight', 'travel', 'remember',
-        'important', 'note', 'remind', 'don\'t forget'
-    ]
-
-    conversation_text = ' '.join([msg['content'] for msg in messages]).lower()
-    keyword_match = any(keyword in conversation_text for keyword in extractable_keywords)
-    
-    # Debug logging for fallback
-    if keyword_match:
-        matched_keywords = [kw for kw in extractable_keywords if kw in conversation_text]
-        print(f"🔑 Keyword fallback: FOUND keywords: {matched_keywords}")
-    
-    return keyword_match
 
 @app.get('/api/agent/session/{session_id}')
 async def api_get_agent_session(session_id: str = Path(..., description="The agent session ID")):
@@ -2675,6 +2816,8 @@ async def startup_event():
     else:
         print("❌ Failed to initialize memory agent")
         raise RuntimeError("Failed to initialize memory agent")
+
+
 
 if __name__ == '__main__':
     import uvicorn

@@ -72,15 +72,14 @@ The improved system correctly handles all test cases:
 
 ### Files Modified
 
-1. **`web_app.py`**: Updated `_contains_extractable_info()` function with LLM-based evaluation
-2. **`memory/agent.py`**: Updated `_contains_extractable_info()` function with LLM-based evaluation
-3. **`memory/extraction.py`**: Added pre-screening stage and improved extraction prompts
+1. **`web_app.py`**: Removed `_contains_extractable_info()` function - now uses single LLM call for extraction
+2. **`memory/agent.py`**: Removed `_contains_extractable_info()` function - now uses single LLM call for extraction
+3. **`memory/extraction.py`**: Single LLM call handles both screening and extraction
 
 ### Key Functions
 
-- `_contains_extractable_info()`: LLM-based evaluation with keyword fallback
-- `_contains_extractable_info_llm()`: Core LLM evaluation logic
-- `_contains_extractable_info_fallback()`: Keyword-based fallback
+- `extract_and_store_memories()`: Single LLM call that handles both evaluation and extraction
+- `_extract_memories_with_llm()`: Core LLM extraction logic that returns empty results when no valuable information is found
 
 ## Benefits
 

@@ -230,8 +230,7 @@ class MemoryAgent:
         """Extract new Nemes from conversational experience.
 
         This represents the process of converting raw experience into
-        structured memory units (Nemes) that can later be activated
-        in K-line construction for reasoning and recall.
+        structured memories.
 
         Args:
             raw_input: Conversational input to analyze for valuable information
@@ -241,7 +240,7 @@ class MemoryAgent:
             existing_memories: Optional list of existing memories to avoid duplicates
 
         Returns:
-            Dictionary with extraction results and newly stored Nemes
+            Dictionary with extraction results and newly stored memories
         """
         return self.extraction.extract_and_store_memories(raw_input, context_prompt, extraction_examples, apply_grounding, existing_memories)
 
