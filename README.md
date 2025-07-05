@@ -6,7 +6,7 @@ Intelligent memory storage, retrieval, and analysis using Redis VectorSet and Op
 
 ## 🎯 Entry Points & Quick Start
 
-This project provides **three main interfaces** for different use cases:
+This project provides **four main interfaces** for different use cases:
 
 ### 1. **CLI Interface** - Interactive Memory Operations
 ```bash
@@ -34,6 +34,15 @@ agent = LangGraphMemoryAgent()
 response = agent.run("What restaurants have I been to?")
 ```
 
+### 4. **Model Context Protocol (MCP) Server** - Universal AI Integration
+```bash
+# Start the MCP server for Claude Desktop and other MCP clients
+python mcp_server.py
+
+# Or use the setup script for easy configuration
+python setup_mcp_server.py
+```
+
 ### 🚀 Quick Setup (5 minutes)
 
 1. **Start Redis 8:**
@@ -56,6 +65,7 @@ response = agent.run("What restaurants have I been to?")
    - CLI: `python main.py`
    - Web: `python web_app.py` → visit http://localhost:5001
    - Programmatic: Import `LangGraphMemoryAgent` in your code
+   - MCP: `python setup_mcp_server.py` → use with Claude Desktop or other MCP clients
 
 ## 🧠 Features
 
@@ -135,6 +145,18 @@ python web_app.py
 ```
 
 Then visit http://localhost:5001 for the web interface.
+
+#### Model Context Protocol (MCP) Server
+
+```bash
+# Set up MCP server for Claude Desktop
+python setup_mcp_server.py
+
+# Or run the server directly
+python mcp_server.py
+```
+
+The MCP server exposes memory capabilities as standardized tools for Claude Desktop and other MCP-compatible clients. See [MCP_SERVER_README.md](MCP_SERVER_README.md) for detailed setup instructions.
 
 ## Project Structure
 
