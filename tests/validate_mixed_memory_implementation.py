@@ -115,7 +115,7 @@ def validate_web_app_changes():
         ('memory_type parameter in search endpoint', r'memory_type.*=.*data\.get\([\'"]memory_type[\'"]'),
         ('memory_type validation', r'memory_type.*not in.*neme.*k-line'),
         ('memory_breakdown in response', r'memory_breakdown'),
-        ('nemes and klines counting', r'nemes.*=.*klines.*='),
+        ('Memories and klines counting', r'Memories.*=.*klines.*='),
         ('enhanced memory context for k-lines', r'if memory_type == [\'"]k-line[\'"]'),
         ('k-line formatting in context', r'original_question.*answer.*confidence')
     ]
@@ -144,7 +144,7 @@ def validate_documentation_updates():
         ('memory_type parameter example', r'memory_type.*:.*[\'"]neme[\'"]'),
         ('k-line only search example', r'memory_type.*:.*[\'"]k-line[\'"]'),
         ('mixed memory handling example', r'memory\.type.*===.*k-line'),
-        ('memory breakdown usage', r'memory_breakdown\.nemes.*memory_breakdown\.klines')
+        ('memory breakdown usage', r'memory_breakdown\.Memories.*memory_breakdown\.klines')
     ]
     
     passed = 0
@@ -219,7 +219,7 @@ def main():
         print("\n🎉 All validations passed!")
         print("The mixed memory type implementation appears to be complete and correct.")
         print("\nKey features implemented:")
-        print("✅ Memory core supports both nemes and k-lines")
+        print("✅ Memory core supports both Memories and k-lines")
         print("✅ Type-specific filtering (memory_type parameter)")
         print("✅ Proper memory object structure with type field")
         print("✅ Enhanced formatting for different memory types")

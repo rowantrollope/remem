@@ -27,7 +27,7 @@ def test_redis_filter_implementation():
         ('Memory type filter logic', r'if memory_type:'),
         ('Neme filter expression', r'@type == [\'"]neme[\'"]'),
         ('K-line filter expression', r'@type == [\'"]k-line[\'"]'),
-        ('Exists check for nemes', r'!exists\(@type\)'),
+        ('Exists check for Memories', r'!exists\(@type\)'),
         ('Filter combination logic', r'combined_filter.*join\(filter_expressions\)'),
         ('FILTER command extension', r'cmd\.extend\(\[\"FILTER\".*combined_filter\]\)'),
         ('Removed Python filtering', '# Apply memory type filtering if specified')

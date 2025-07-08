@@ -360,10 +360,10 @@ def get_vectorstore_name(vectorstore_param: Optional[str] = None) -> str:
     return vectorstore_param or app_config["redis"]["vectorset_key"]
 
 # =============================================================================
-# NEME API - Fundamental Memory Operations (Inspired by Minsky's "Nemes")
+# NEME API - Fundamental Memory Operations (Inspired by Minsky's "Memories")
 # =============================================================================
 #
-# Nemes are the fundamental units of memory in Minsky's Society of Mind theory.
+# Memories are the fundamental units of memory in Minsky's Society of Mind theory.
 # These APIs handle atomic memory storage, retrieval, and basic operations.
 # Think of these as the building blocks of knowledge that can be combined
 # by higher-level cognitive processes.
@@ -469,10 +469,10 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Opti
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/api/memory/search')
-async def api_search_nemes_default(request: MemorySearchRequest):
-    """Search atomic memories (Nemes) in the default vectorstore using vector similarity.
+async def api_search_Memories_default(request: MemorySearchRequest):
+    """Search atomic memories in the default vectorstore using vector similarity.
 
-    This performs direct vector similarity search across stored Nemes,
+    This performs direct vector similarity search across stored Memories,
     returning the most relevant atomic memories for a given query.
 
     Returns:
@@ -481,8 +481,8 @@ async def api_search_nemes_default(request: MemorySearchRequest):
     return await _search_memories_impl(request, vectorstore_name=None)
 
 @app.post('/api/memory/{vectorstore_name}/search')
-async def api_search_nemes_vectorstore(vectorstore_name: str, request: MemorySearchRequest):
-    """Search atomic memories (Nemes) in a specific vectorstore using vector similarity.
+async def api_search_Memories_vectorstore(vectorstore_name: str, request: MemorySearchRequest):
+    """Search atomic memories (Memories) in a specific vectorstore using vector similarity.
 
     Args:
         vectorstore_name: Name of the vectorstore to search in
@@ -684,8 +684,8 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = 
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete('/api/memory/all')
-async def api_delete_all_nemes_default():
-    """Clear all atomic memories (Nemes) from the default vectorstore.
+async def api_delete_all_Memories_default():
+    """Clear all atomic memories (Memories) from the default vectorstore.
 
     Returns:
         JSON with success status, deletion count, and operation details
@@ -693,8 +693,8 @@ async def api_delete_all_nemes_default():
     return await _delete_all_memories_impl(vectorstore_name=None)
 
 @app.delete('/api/memory/{vectorstore_name}/all')
-async def api_delete_all_nemes_vectorstore(vectorstore_name: str):
-    """Clear all atomic memories (Nemes) from a specific vectorstore.
+async def api_delete_all_Memories_vectorstore(vectorstore_name: str):
+    """Clear all atomic memories (Memories) from a specific vectorstore.
 
     Args:
         vectorstore_name: Name of the vectorstore to clear
@@ -878,10 +878,10 @@ async def _get_context_impl(vectorstore_name: Optional[str] = None):
 
 # DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
 @app.delete('/api/memory')  
-async def api_delete_all_nemes_legacy(request: Optional[MemoryDeleteRequest] = None):
+async def api_delete_all_Memories_legacy(request: Optional[MemoryDeleteRequest] = None):
     """DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
     
-    Clear all atomic memories (Nemes) from the system.
+    Clear all atomic memories (Memories) from the system.
     
     Args:
         request: Optional request body with vectorstore_name
@@ -898,7 +898,7 @@ async def api_delete_all_nemes_legacy(request: Optional[MemoryDeleteRequest] = N
 # =============================================================================
 #
 # K-lines (Knowledge lines) represent temporary mental states that activate
-# and connect relevant Nemes for specific cognitive tasks. In Minsky's theory,
+# and connect relevant Memories for specific cognitive tasks. In Minsky's theory,
 # K-lines are the mechanism by which the mind constructs coherent mental states
 # from distributed memory fragments.
 #
@@ -906,7 +906,7 @@ async def api_delete_all_nemes_legacy(request: Optional[MemoryDeleteRequest] = N
 # - Constructing mental states by recalling and filtering relevant memories
 # - Question answering with confidence scoring and reasoning
 # - Extracting valuable memories from conversational data
-# - Advanced cognitive operations that combine multiple Nemes
+# - Advanced cognitive operations that combine multiple Memories
 # =============================================================================
 
 
@@ -915,7 +915,7 @@ async def api_delete_all_nemes_legacy(request: Optional[MemoryDeleteRequest] = N
 async def api_kline_answer(request: KLineAnswerRequest):
     """Answer a question using K-line construction and reasoning.
 
-    This operation constructs a mental state from relevant Nemes and applies
+    This operation constructs a mental state from relevant Memories and applies
     sophisticated reasoning to answer questions with confidence scoring.
     It represents the full cognitive process of memory recall + reasoning.
 
@@ -985,7 +985,7 @@ async def api_kline_answer(request: KLineAnswerRequest):
 # =============================================================================
 #
 # The Agent API represents the highest level of cognitive architecture,
-# orchestrating both Nemes (atomic memories) and K-lines (mental states)
+# orchestrating both Memories (atomic memories) and K-lines (mental states)
 # to provide sophisticated conversational and reasoning capabilities.
 #
 # These APIs handle:
@@ -1000,7 +1000,7 @@ async def api_agent_chat(request: AgentChatRequest):
     """Full conversational agent with integrated memory architecture.
 
     This endpoint orchestrates the complete cognitive architecture:
-    - Searches relevant Nemes (atomic memories)
+    - Searches relevant Memories (atomic memories)
     - Constructs K-lines (mental states) for context
     - Applies sophisticated reasoning and language generation
     - Optionally extracts new memories from the conversation
@@ -1108,7 +1108,7 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
     """Send a message to an agent session with full cognitive architecture.
 
     This endpoint provides the complete agent experience:
-    - Searches relevant Nemes for context
+    - Searches relevant Memories for context
     - Constructs K-lines (mental states)
     - Generates contextually-aware responses
     - Automatically extracts new memories from conversations

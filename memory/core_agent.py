@@ -33,11 +33,11 @@ class MemoryAgent:
     """Intelligent Memory Agent based on Minsky's Society of Mind Theory.
 
     This agent implements a cognitive architecture inspired by Marvin Minsky's
-    concepts of Nemes (fundamental memory units) and K-lines (knowledge lines
+    concepts of Memories (fundamental memory units) and K-lines (knowledge lines
     that construct mental states from distributed memories).
 
     Architecture Layers:
-    - MemoryCore: Manages Nemes (atomic memory storage and retrieval)
+    - MemoryCore: Manages Memories (atomic memory storage and retrieval)
     - MemoryProcessing: Analysis and filtering utilities
     - MemoryExtraction: Intelligent conversation processing
     - MemoryReasoning: K-line construction and sophisticated reasoning
@@ -53,7 +53,7 @@ class MemoryAgent:
         """Initialize the memory agent with Minsky-inspired cognitive architecture.
 
         This creates a layered system where:
-        - Core layer manages Nemes (fundamental memory units)
+        - Core layer manages Memories (fundamental memory units)
         - Processing layer provides cognitive utilities
         - Extraction layer converts experience to structured memory
         - Reasoning layer constructs K-lines (mental states) for complex cognition
@@ -80,7 +80,7 @@ class MemoryAgent:
     # NEME API - Fundamental Memory Operations
     # =========================================================================
     #
-    # Nemes are the atomic units of memory in Minsky's Society of Mind theory.
+    # Memories are the atomic units of memory in Minsky's Society of Mind theory.
     # They represent fundamental knowledge structures that can be:
     # - Stored with contextual grounding
     # - Retrieved through vector similarity
@@ -93,7 +93,7 @@ class MemoryAgent:
         """Store an atomic memory (Neme) with optional contextual grounding.
 
         In Minsky's framework, this creates a fundamental memory unit that
-        can later be activated and combined with other Nemes to form
+        can later be activated and combined with other Memories to form
         complex mental states (K-lines).
 
         Args:
@@ -109,7 +109,7 @@ class MemoryAgent:
     def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> List[Dict[str, Any]]:
         """Search for relevant memories using vector similarity.
 
-        This operation finds Nemes (atomic memories) that can be activated together for cognitive tasks.
+        This operation finds Memories (atomic memories) that can be activated together for cognitive tasks.
 
         Args:
             query: Search query to find relevant memories
@@ -193,7 +193,7 @@ class MemoryAgent:
     # =========================================================================
     #
     # K-lines (Knowledge lines) are Minsky's concept for temporary mental states
-    # that activate and connect relevant Nemes for specific cognitive tasks.
+    # that activate and connect relevant Memories for specific cognitive tasks.
     #
     # A K-line represents the mind's ability to:
     # - Recall relevant memories for a specific context
@@ -207,19 +207,19 @@ class MemoryAgent:
         """Answer a question by constructing a K-line and applying reasoning.
 
         This method demonstrates the full K-line process:
-        1. Activates relevant Nemes based on the question
+        1. Activates relevant Memories based on the question
         2. Constructs a mental state (K-line) from these memories
         3. Applies reasoning to generate a confident answer
         4. Returns structured results with supporting evidence
 
         Args:
             question: The question to answer
-            top_k: Number of Nemes to activate for the mental state
+            top_k: Number of Memories to activate for the mental state
             filterBy: Optional filter expression
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
-            Structured answer with confidence, reasoning, and supporting Nemes
+            Structured answer with confidence, reasoning, and supporting Memories
         """
         return self.reasoning.answer_question(question, top_k, filterBy, min_similarity)
 
@@ -227,7 +227,7 @@ class MemoryAgent:
                                  extraction_examples: Optional[List[Dict[str, str]]] = None,
                                  apply_grounding: bool = True,
                                  existing_memories: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        """Extract new Nemes from conversational experience.
+        """Extract new Memories from conversational experience.
 
         This represents the process of converting raw experience into
         structured memories.
@@ -236,7 +236,7 @@ class MemoryAgent:
             raw_input: Conversational input to analyze for valuable information
             context_prompt: Application context for extraction guidance
             extraction_examples: Optional examples to guide extraction
-            apply_grounding: Whether to apply grounding to extracted Nemes
+            apply_grounding: Whether to apply grounding to extracted Memories
             existing_memories: Optional list of existing memories to avoid duplicates
 
         Returns:
@@ -267,13 +267,13 @@ class MemoryAgent:
         """Construct and format a mental state (K-line) for display.
 
         This method demonstrates K-line construction by:
-        1. Activating relevant Nemes based on the query
+        1. Activating relevant Memories based on the query
         2. Organizing them into a coherent mental state
         3. Formatting the result for human consumption
 
         Args:
             query: Query to construct mental state around
-            top_k: Number of Nemes to activate
+            top_k: Number of Memories to activate
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
 
         Returns:
@@ -294,11 +294,11 @@ class MemoryAgent:
 
 def main():
     """Main CLI interface for the Minsky-inspired Memory Agent."""
-    print("🧠 Minsky Memory Agent - Nemes & K-lines")
+    print("🧠 Minsky Memory Agent - Memories & K-lines")
     print("=" * 50)
     print("Based on Marvin Minsky's Society of Mind theory")
-    print("• Nemes: Fundamental memory units")
-    print("• K-lines: Mental states constructed from Nemes")
+    print("• Memories: Fundamental memory units")
+    print("• K-lines: Mental states constructed from Memories")
     print("=" * 50)
 
     # Check for OpenAI API key
@@ -322,7 +322,7 @@ def main():
     print("- info - Show Neme statistics and system information")
     print()
     print("K-LINE Operations (Mental State Construction):")
-    print("- recall \"<query>\" - Construct mental state from relevant Nemes")
+    print("- recall \"<query>\" - Construct mental state from relevant Memories")
     print("- ask \"<question>\" - Answer question using K-line reasoning")
     print()
     print("Context Management:")
@@ -517,13 +517,13 @@ def main():
                 if 'error' in info:
                     print(f"❌ {info['error']}")
                 else:
-                    print(f"🧠 Total Nemes (Atomic Memories): {info['memory_count']}")
+                    print(f"🧠 Total Memories (Atomic Memories): {info['memory_count']}")
                     print(f"🔢 Vector Dimension: {info['vector_dimension']}")
                     print(f"🗃️  VectorSet Name: {info['vectorset_name']}")
                     print(f"🤖 Embedding Model: {info['embedding_model']}")
                     print(f"🔗 Redis: {info['redis_host']}:{info['redis_port']}")
                     print(f"⏰ Timestamp: {info['timestamp']}")
-                    print(f"📖 Framework: Minsky's Society of Mind (Nemes + K-lines)")
+                    print(f"📖 Framework: Minsky's Society of Mind (Memories + K-lines)")
 
                     if 'note' in info:
                         print(f"ℹ️  Note: {info['note']}")

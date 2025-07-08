@@ -59,7 +59,7 @@ def test_api_endpoint(method, endpoint, data=None, expected_status=200):
 def main():
     """Test the Minsky-inspired three-layer API architecture."""
     print("🧠 Testing Minsky Memory Agent API")
-    print("🔬 Three-Layer Architecture: Nemes → K-lines → Agent")
+    print("🔬 Three-Layer Architecture: Memories → K-lines → Agent")
     print("=" * 60)
     
     # Test health check first
@@ -191,7 +191,7 @@ def main():
         test_api_endpoint("DELETE", f"/api/memory/{memory_id}")
 
     # Test clear all memories
-    print("15. Testing Clear All Nemes")
+    print("15. Testing Clear All Memories")
     test_api_endpoint("DELETE", "/api/memory")
     
     print("🎉 Minsky Memory Agent API Testing Complete!")
@@ -260,4 +260,4 @@ if __name__ == "__main__":
     print("\n📚 For complete API documentation, see:")
     print("   - API_DOCUMENTATION.md (Minsky framework & API reference)")
     print("   - EXAMPLES.md (Three-layer usage examples)")
-    print("\n🧠 Minsky's Society of Mind: Nemes + K-lines = Intelligence")
+    print("\n🧠 Minsky's Society of Mind: Memories + K-lines = Intelligence")

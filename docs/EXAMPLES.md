@@ -9,7 +9,7 @@ This example demonstrates how the three-layer API works together to create an in
 First, we store atomic memories about the user:
 
 ```javascript
-// Store basic preferences as Nemes
+// Store basic preferences as Memories
 await fetch('/api/memory', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -60,7 +60,7 @@ const filteredMemories = await fetch('/api/klines/recall', {
   body: JSON.stringify({
     query: "restaurant preferences for dinner",
     top_k: 10,
-    memory_type: "neme",  // Only search atomic memories (nemes)
+    memory_type: "neme",  // Only search atomic memories (Memories)
     use_llm_filtering: true  // Apply intelligent relevance filtering
   })
 });
@@ -84,7 +84,7 @@ const complexSearch = await fetch('/api/memory/search', {
   body: JSON.stringify({
     query: "travel preferences",
     top_k: 10,
-    memory_type: "neme",  // Only nemes
+    memory_type: "neme",  // Only Memories
     filter: "@tags == 'preferences'"  // Additional custom filter
     // Combined Redis FILTER: (@tags == "preferences") && ((!exists(@type) || @type == 'neme'))
   })
@@ -115,12 +115,12 @@ const allMemories = await fetch('/api/memory/search', {
   body: JSON.stringify({
     query: "travel preferences",
     top_k: 10
-    // No memory_type specified - returns both nemes and k-lines
+    // No memory_type specified - returns both Memories and k-lines
   })
 });
 
 const result = await allMemories.json();
-console.log(`Found ${result.memory_breakdown.nemes} nemes and ${result.memory_breakdown.klines} k-lines`);
+console.log(`Found ${result.memory_breakdown.Memories} Memories and ${result.memory_breakdown.klines} k-lines`);
 
 // Process different memory types appropriately
 result.memories.forEach(memory => {
@@ -204,7 +204,7 @@ const extraction = await fetch('/api/klines/extract', {
 
 const extractionResult = await extraction.json();
 console.log(extractionResult);
-// This will automatically create new Nemes like:
+// This will automatically create new Memories like:
 // - "User enjoyed Le Bernardin restaurant"
 // - "User prefers restaurants with good views"
 // - "Wife is vegetarian (confirmed)"
@@ -212,7 +212,7 @@ console.log(extractionResult);
 
 ## Progressive Development Pattern
 
-### 1. Start Simple (Nemes)
+### 1. Start Simple (Memories)
 ```javascript
 // Begin with basic memory storage
 const memories = [
@@ -241,7 +241,7 @@ const agent = await createAgentSession({
   use_memory: true
 });
 
-// Agent automatically uses Nemes and K-lines internally
+// Agent automatically uses Memories and K-lines internally
 await chatWithAgent(agent, "Plan my business trip to Tokyo");
 ```
 
@@ -276,7 +276,7 @@ try {
 
 ## Best Practices
 
-1. **Start with Nemes**: Build your knowledge base with atomic memories
+1. **Start with Memories**: Build your knowledge base with atomic memories
 2. **Use K-lines for reasoning**: Construct mental states for complex queries
 3. **Deploy Agents for UX**: Provide natural conversation interfaces
 4. **Extract continuously**: Use conversations to grow your memory base

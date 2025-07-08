@@ -708,7 +708,7 @@ Respond with a JSON object:
                         else:
                             metadata = {}
 
-                        # All memories are now nemes (atomic memories)
+                        # All memories are now Memories (atomic memories)
                         display_text = metadata.get("final_text", metadata.get("raw_text", ""))
                         created_at = metadata.get("created_at")
 
@@ -736,7 +736,7 @@ Respond with a JSON object:
                             "last_accessed_at": metadata.get("last_accessed_at", created_at),
                             "access_count": metadata.get("access_count", 0),
                             "formatted_time": formatted_time,  # Human-readable timestamp
-                            # All memories are now nemes (atomic memories)
+                            # All memories are now Memories (atomic memories)
                             "type": "neme"
                         }
 

@@ -254,10 +254,10 @@ Your response:"""
         return relevant_memories
 
     def format_memory_results(self, memories: List[Dict[str, Any]]) -> str:
-        """Format memory search results for display, handling both nemes and k-lines.
+        """Format memory search results for display, handling both Memories and k-lines.
 
         Args:
-            memories: List of memory dictionaries (can include both nemes and k-lines)
+            memories: List of memory dictionaries (can include both Memories and k-lines)
 
         Returns:
             Formatted string of memories with appropriate formatting for each type

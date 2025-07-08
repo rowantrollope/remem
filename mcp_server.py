@@ -6,7 +6,7 @@ This MCP server exposes the remem memory system capabilities as standardized too
 that can be used by any MCP-compatible client (like Claude Desktop, IDEs, etc.).
 
 The server provides tools for:
-- Storing memories (nemes)
+- Storing memories (Memories)
 - Searching memories
 - Getting memory statistics
 - Managing context

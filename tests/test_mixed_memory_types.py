@@ -2,7 +2,7 @@
 """
 Test script to verify that mixed k-line and neme retrieval works correctly.
 This test verifies that:
-1. Both k-lines and nemes can be stored and retrieved together
+1. Both k-lines and Memories can be stored and retrieved together
 2. Memory type filtering works correctly
 3. API responses include proper type information
 4. Memory processing handles both types gracefully
@@ -17,11 +17,11 @@ import sys
 BASE_URL = "http://localhost:5001"
 
 def test_mixed_memory_storage_and_retrieval():
-    """Test storing both nemes and k-lines, then retrieving them together."""
+    """Test storing both Memories and k-lines, then retrieving them together."""
     print("🧪 Testing mixed memory type storage and retrieval...")
     
-    # Step 1: Store some nemes
-    print("\n1. Storing nemes...")
+    # Step 1: Store some Memories
+    print("\n1. Storing Memories...")
     neme_texts = [
         "User prefers window seats on flights",
         "User enjoys Italian cuisine",
@@ -29,7 +29,7 @@ def test_mixed_memory_storage_and_retrieval():
         "User has a budget of $200 per night for hotels"
     ]
     
-    stored_nemes = []
+    stored_Memories = []
     for text in neme_texts:
         response = requests.post(f"{BASE_URL}/api/memory", json={
             "text": text,
@@ -37,7 +37,7 @@ def test_mixed_memory_storage_and_retrieval():
         })
         if response.status_code == 200:
             result = response.json()
-            stored_nemes.append(result['memory_id'])
+            stored_Memories.append(result['memory_id'])
             print(f"   ✅ Stored neme: {text}")
         else:
             print(f"   ❌ Failed to store neme: {text}")
@@ -85,16 +85,16 @@ def test_mixed_memory_storage_and_retrieval():
     breakdown = result.get('memory_breakdown', {})
     
     print(f"   📊 Found {len(memories)} total memories")
-    print(f"   📊 Breakdown: {breakdown.get('nemes', 0)} nemes, {breakdown.get('klines', 0)} k-lines")
+    print(f"   📊 Breakdown: {breakdown.get('Memories', 0)} Memories, {breakdown.get('klines', 0)} k-lines")
     
     # Verify we have both types
     neme_count = len([m for m in memories if m.get('type', 'neme') == 'neme'])
     kline_count = len([m for m in memories if m.get('type', 'neme') == 'k-line'])
     
-    print(f"   🔍 Actual counts: {neme_count} nemes, {kline_count} k-lines")
+    print(f"   🔍 Actual counts: {neme_count} Memories, {kline_count} k-lines")
     
     if neme_count == 0:
-        print("   ⚠️ No nemes found in mixed search")
+        print("   ⚠️ No Memories found in mixed search")
     if kline_count == 0:
         print("   ⚠️ No k-lines found in mixed search")
     
@@ -114,7 +114,7 @@ def test_mixed_memory_storage_and_retrieval():
         neme_only_count = len([m for m in neme_only_memories if m.get('type', 'neme') == 'neme'])
         kline_in_neme_search = len([m for m in neme_only_memories if m.get('type', 'neme') == 'k-line'])
         
-        print(f"   🔍 Neme-only search: {neme_only_count} nemes, {kline_in_neme_search} k-lines")
+        print(f"   🔍 Neme-only search: {neme_only_count} Memories, {kline_in_neme_search} k-lines")
         if kline_in_neme_search > 0:
             print("   ❌ K-lines found in neme-only search!")
             return False
@@ -135,9 +135,9 @@ def test_mixed_memory_storage_and_retrieval():
         kline_only_count = len([m for m in kline_only_memories if m.get('type', 'neme') == 'k-line'])
         neme_in_kline_search = len([m for m in kline_only_memories if m.get('type', 'neme') == 'neme'])
         
-        print(f"   🔍 K-line-only search: {kline_only_count} k-lines, {neme_in_kline_search} nemes")
+        print(f"   🔍 K-line-only search: {kline_only_count} k-lines, {neme_in_kline_search} Memories")
         if neme_in_kline_search > 0:
-            print("   ❌ Nemes found in k-line-only search!")
+            print("   ❌ Memories found in k-line-only search!")
             return False
     else:
         print(f"   ❌ K-line-only search failed: {response.text}")
@@ -190,7 +190,7 @@ def test_agent_session_with_mixed_memories():
     # Send a message that should retrieve mixed memory types
     response = requests.post(f"{BASE_URL}/api/agent/session/{session_id}", json={
         "message": "Help me plan a trip",
-        "top_k": 10  # Should retrieve both nemes and k-lines
+        "top_k": 10  # Should retrieve both Memories and k-lines
     })
     
     if response.status_code != 200:
@@ -223,7 +223,7 @@ def main():
         
         if success1 and success2:
             print("\n🎉 All mixed memory type tests completed successfully!")
-            print("The system now properly handles both k-lines and nemes together.")
+            print("The system now properly handles both k-lines and Memories together.")
             return True
         else:
             print("\n❌ Some tests failed. Please check the implementation.")

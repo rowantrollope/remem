@@ -4,19 +4,19 @@
 
 This API implements a cognitive memory architecture inspired by Marvin Minsky's "Society of Mind" theory. The system is organized around two fundamental concepts:
 
-- **Nemes**: Atomic memory units (fundamental knowledge structures)
-- **K-lines**: Mental states constructed by activating and connecting relevant Nemes
+- **Memories**: Atomic memory units (fundamental knowledge structures)
+- **K-lines**: Mental states constructed by activating and connecting relevant Memories
 
 ## Three-Layer Architecture
 
 ### 1. NEME API - Fundamental Memory Operations
-Direct manipulation of atomic memories (Nemes) - the building blocks of knowledge.
+Direct manipulation of atomic memories (Memories) - the building blocks of knowledge.
 
 ### 2. K-LINE API - Reflective Operations  
-Mental state construction and reasoning by combining Nemes into coherent cognitive structures.
+Mental state construction and reasoning by combining Memories into coherent cognitive structures.
 
 ### 3. AGENT API - High-Level Orchestration
-Full conversational agents that orchestrate both Nemes and K-lines for sophisticated interactions.
+Full conversational agents that orchestrate both Memories and K-lines for sophisticated interactions.
 
 ---
 
@@ -50,7 +50,7 @@ Store a fundamental memory unit with optional contextual grounding.
 ### Search Atomic Memories
 **POST** `/api/memory/search`
 
-Find relevant Nemes using vector similarity search.
+Find relevant Memories using vector similarity search.
 
 ```json
 {
@@ -91,7 +91,7 @@ Remove a specific Neme by ID.
 ### Clear All Memories
 **DELETE** `/api/memory`
 
-Remove all stored Nemes from the system.
+Remove all stored Memories from the system.
 
 ### Context Management
 **POST** `/api/memory/context` - Set current context for grounding
@@ -104,7 +104,7 @@ Remove all stored Nemes from the system.
 ### Construct Mental State
 **POST** `/api/klines/recall`
 
-Build a mental state (K-line) by activating relevant Nemes using enhanced relevance scoring.
+Build a mental state (K-line) by activating relevant Memories using enhanced relevance scoring.
 
 ```json
 {
@@ -170,7 +170,7 @@ Answer questions using K-line construction and sophisticated reasoning.
 ### Extract Memories from Conversation
 **POST** `/api/klines/extract`
 
-Intelligently extract valuable information from conversations and store as new Nemes.
+Intelligently extract valuable information from conversations and store as new Memories.
 
 ```json
 {
@@ -243,25 +243,25 @@ Parameters:
 
 ### Minsky's Theory Applied
 
-1. **Nemes** represent atomic knowledge units:
+1. **Memories** represent atomic knowledge units:
    - "User likes Italian food"
    - "Wife is vegetarian" 
    - "Prefers window seats"
 
-2. **K-lines** activate relevant Nemes for specific tasks:
+2. **K-lines** activate relevant Memories for specific tasks:
    - Question: "Plan dinner" → Activates food preferences + dietary restrictions
    - Creates mental state: "Italian food + vegetarian options"
    - Generates answer: "Try vegetarian Italian restaurant"
 
 3. **Agent** orchestrates the complete process:
-   - Searches relevant Nemes
+   - Searches relevant Memories
    - Constructs appropriate K-lines
    - Applies reasoning and language generation
-   - Extracts new Nemes from interactions
+   - Extracts new Memories from interactions
 
 ### Progressive Complexity
 
-- **Level 1 (Nemes)**: Simple storage and retrieval
+- **Level 1 (Memories)**: Simple storage and retrieval
 - **Level 2 (K-lines)**: Reasoning and mental state construction  
 - **Level 3 (Agent)**: Full conversational intelligence
 

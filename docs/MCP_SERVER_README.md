@@ -11,7 +11,7 @@ Model Context Protocol (MCP) is an open protocol that standardizes how applicati
 The Remem MCP Server provides the following tools:
 
 ### Core Memory Operations
-- **store_memory**: Store new memories (nemes) with contextual grounding
+- **store_memory**: Store new memories (Memories) with contextual grounding
 - **search_memories**: Search for relevant memories using vector similarity
 - **get_memory_stats**: Get statistics about the memory system
 - **answer_question**: Answer questions using the memory system with confidence scoring
