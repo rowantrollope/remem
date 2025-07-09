@@ -348,16 +348,7 @@ def validate_vectorstore_name(name: str) -> None:
             detail=f"'{name}' is a reserved name. Reserved names: {', '.join(RESERVED_VECTORSTORE_NAMES)}"
         )
 
-def get_vectorstore_name(vectorstore_param: Optional[str] = None) -> str:
-    """Get vectorstore name with fallback to default.
-    
-    Args:
-        vectorstore_param: Optional vectorstore name from URL parameter
-        
-    Returns:
-        Vectorstore name (explicit or default)
-    """
-    return vectorstore_param or app_config["redis"]["vectorset_key"]
+# Note: Default vectorstore support has been removed. All endpoints now require explicit vectorstore names.
 
 # =============================================================================
 # NEME API - Fundamental Memory Operations (Inspired by Minsky's "Memories")
@@ -368,25 +359,45 @@ def get_vectorstore_name(vectorstore_param: Optional[str] = None) -> str:
 # Think of these as the building blocks of knowledge that can be combined
 # by higher-level cognitive processes.
 #
+# All endpoints require explicit vectorstore names for proper isolation and clarity.
+# No default vectorstore support - this ensures explicit, predictable behavior.
+#
 # Core operations:
 # - Store atomic memories with contextual grounding
 # - Vector similarity search across stored memories
 # - Memory lifecycle management (delete, clear)
 # - Context management for grounding operations
+#
+# API Structure: /api/memory/{vectorstore_name}/{operation}
 # =============================================================================
 
-@app.post('/api/memory')
-async def api_store_neme_default(request: MemoryStoreRequest):
-    """Store a new atomic memory (Neme) in the default vectorstore.
+@app.post('/api/memory/{vectorstore_name}/search')
+async def api_search_Memories_vectorstore(vectorstore_name: str, request: MemorySearchRequest):
+    """Search atomic memories (Memories) in a specific vectorstore using vector similarity.
 
-    In Minsky's framework, a Neme is a fundamental unit of memory - an atomic
-    piece of knowledge that can be contextually grounded and later recalled
-    by higher-level cognitive processes.
+    Args:
+        vectorstore_name: Name of the vectorstore to search in
 
     Returns:
-        JSON with success status, memory_id, message, and grounding information
+        JSON with success status, memories array, count, and memory breakdown by type
     """
-    return await _store_memory_impl(request, vectorstore_name=None)
+    validate_vectorstore_name(vectorstore_name)
+    return await _search_memories_impl(request, vectorstore_name=vectorstore_name)
+
+@app.post('/api/memory/{vectorstore_name}/context')
+async def api_set_neme_context_vectorstore(vectorstore_name: str, request: ContextSetRequest):
+    """Set current context for memory grounding in a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to set context for
+        request: Context parameters (location, activity, people_present)
+
+    Returns:
+        JSON with success status and updated context
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _set_context_impl(request, {}, vectorstore_name=vectorstore_name)
+
 
 @app.post('/api/memory/{vectorstore_name}')
 async def api_store_neme_vectorstore(vectorstore_name: str, request: MemoryStoreRequest):
@@ -401,9 +412,12 @@ async def api_store_neme_vectorstore(vectorstore_name: str, request: MemoryStore
     validate_vectorstore_name(vectorstore_name)
     return await _store_memory_impl(request, vectorstore_name=vectorstore_name)
 
-async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Optional[str] = None):
-    """Implementation for storing memories with vectorstore support.
-    
+async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: str):
+    """Implementation for storing memories with explicit vectorstore support.
+
+    Args:
+        vectorstore_name: Explicit vectorstore name (required)
+
     Returns:
         JSON with success status, memory_id, message, and grounding information:
         - success (bool): Whether the operation succeeded
@@ -420,15 +434,12 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Opti
     try:
         memory_text = request.text.strip()
         apply_grounding = request.apply_grounding
-        
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         if not memory_text:
             raise HTTPException(status_code=400, detail='Memory text is required')
 
         print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
-        print(f"📦 Vectorstore: {final_vectorstore_name}")
+        print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
@@ -437,7 +448,7 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Opti
         storage_result = memory_agent.memory_agent.store_memory(
             memory_text,
             apply_grounding=apply_grounding,
-            vectorset_key=final_vectorstore_name
+            vectorset_key=vectorstore_name
         )
 
         # Prepare response with grounding information
@@ -450,7 +461,7 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Opti
             'grounding_applied': storage_result['grounding_applied'],
             'tags': storage_result['tags'],
             'created_at': storage_result['created_at'],
-            'vectorstore_name': final_vectorstore_name
+            'vectorstore_name': vectorstore_name
         }
 
         # Include grounding information if available
@@ -468,34 +479,12 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: Opti
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post('/api/memory/search')
-async def api_search_Memories_default(request: MemorySearchRequest):
-    """Search atomic memories in the default vectorstore using vector similarity.
-
-    This performs direct vector similarity search across stored Memories,
-    returning the most relevant atomic memories for a given query.
-
-    Returns:
-        JSON with success status, memories array, count, and memory breakdown by type
-    """
-    return await _search_memories_impl(request, vectorstore_name=None)
-
-@app.post('/api/memory/{vectorstore_name}/search')
-async def api_search_Memories_vectorstore(vectorstore_name: str, request: MemorySearchRequest):
-    """Search atomic memories (Memories) in a specific vectorstore using vector similarity.
+async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: str):
+    """Implementation for searching memories with explicit vectorstore support.
 
     Args:
-        vectorstore_name: Name of the vectorstore to search in
+        vectorstore_name: Explicit vectorstore name (required)
 
-    Returns:
-        JSON with success status, memories array, count, and memory breakdown by type
-    """
-    validate_vectorstore_name(vectorstore_name)
-    return await _search_memories_impl(request, vectorstore_name=vectorstore_name)
-
-async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: Optional[str] = None):
-    """Implementation for searching memories with vectorstore support.
-    
     Returns:
         JSON with success status, memories array, count, and memory breakdown by type
     """
@@ -505,15 +494,12 @@ async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: 
         filter_expr = request.filter
         optimize_query = request.optimize_query
         min_similarity = request.min_similarity
-        
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         if not query:
             raise HTTPException(status_code=400, detail='Query is required')
 
         print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
-        print(f"📦 Vectorstore: {final_vectorstore_name}")
+        print(f"📦 Vectorstore: {vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
         if optimize_query:
@@ -530,15 +516,15 @@ async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: 
                 search_query = validation_result.get("embedding_query") or validation_result["content"]
                 print(f"🔍 Using optimized search query: '{search_query}'")
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    search_query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
+                    search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
                 )
             else:
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
+                    query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
                 )
         else:
             search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                query, top_k, filter_expr, min_similarity, vectorset_key=final_vectorstore_name
+                query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
             )
 
         memories = search_result['memories']
@@ -552,22 +538,13 @@ async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: 
             'memories': memories,
             'count': len(memories),
             'filtering_info': filtering_info,
-            'vectorstore_name': final_vectorstore_name
+            'vectorstore_name': vectorstore_name
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get('/api/memory')
-async def api_get_neme_info_default():
-    """Get atomic memory (Neme) statistics and system information for the default vectorstore.
-
-    Returns:
-        JSON with memory count, vector dimension, embedding model, and system info
-    """
-    return await _get_memory_info_impl(vectorstore_name=None)
 
 @app.get('/api/memory/{vectorstore_name}')
 async def api_get_neme_info_vectorstore(vectorstore_name: str):
@@ -582,18 +559,18 @@ async def api_get_neme_info_vectorstore(vectorstore_name: str):
     validate_vectorstore_name(vectorstore_name)
     return await _get_memory_info_impl(vectorstore_name=vectorstore_name)
 
-async def _get_memory_info_impl(vectorstore_name: Optional[str] = None):
-    """Implementation for getting memory info with vectorstore support.
-    
+async def _get_memory_info_impl(vectorstore_name: str):
+    """Implementation for getting memory info with explicit vectorstore support.
+
+    Args:
+        vectorstore_name: Explicit vectorstore name (required)
+
     Returns:
         JSON with memory count, vector dimension, embedding model, and system info
     """
     try:
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
-
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         # Get comprehensive memory information from underlying agent
         memory_info = memory_agent.memory_agent.get_memory_info()
@@ -602,7 +579,7 @@ async def _get_memory_info_impl(vectorstore_name: Optional[str] = None):
             raise HTTPException(status_code=500, detail=memory_info['error'])
 
         # Add vectorstore name to response
-        memory_info['vectorstore_name'] = final_vectorstore_name
+        memory_info['vectorstore_name'] = vectorstore_name
 
         return {
             'success': True,
@@ -613,18 +590,6 @@ async def _get_memory_info_impl(vectorstore_name: Optional[str] = None):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete('/api/memory/{memory_id}')
-async def api_delete_neme_default(memory_id: str = Path(..., description="UUID of the memory to delete")):
-    """Delete a specific atomic memory (Neme) by ID from the default vectorstore.
-
-    Args:
-        memory_id: UUID of the memory to delete
-
-    Returns:
-        JSON with success status and deletion details
-    """
-    return await _delete_memory_impl(memory_id, vectorstore_name=None)
 
 @app.delete('/api/memory/{vectorstore_name}/{memory_id}')
 async def api_delete_neme_vectorstore(vectorstore_name: str, memory_id: str):
@@ -640,9 +605,12 @@ async def api_delete_neme_vectorstore(vectorstore_name: str, memory_id: str):
     validate_vectorstore_name(vectorstore_name)
     return await _delete_memory_impl(memory_id, vectorstore_name=vectorstore_name)
 
-async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = None):
-    """Implementation for deleting a memory with vectorstore support.
-    
+async def _delete_memory_impl(memory_id: str, vectorstore_name: str):
+    """Implementation for deleting a memory with explicit vectorstore support.
+
+    Args:
+        vectorstore_name: Explicit vectorstore name (required)
+
     Returns:
         JSON with success status and deletion details
     """
@@ -650,11 +618,8 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = 
         if not memory_id or not memory_id.strip():
             raise HTTPException(status_code=400, detail='Memory ID is required')
 
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
-
         print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
-        print(f"📦 Vectorstore: {final_vectorstore_name}")
+        print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
@@ -662,7 +627,7 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = 
 
         success = memory_agent.memory_agent.delete_memory(
             memory_id.strip(),
-            vectorset_key=final_vectorstore_name
+            vectorset_key=vectorstore_name
         )
 
         if success:
@@ -670,7 +635,7 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = 
                 'success': True,
                 'message': f'Neme {memory_id} deleted successfully',
                 'memory_id': memory_id,
-                'vectorstore_name': final_vectorstore_name
+                'vectorstore_name': vectorstore_name
             }
         else:
             raise HTTPException(
@@ -682,15 +647,6 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: Optional[str] = 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete('/api/memory/all')
-async def api_delete_all_Memories_default():
-    """Clear all atomic memories (Memories) from the default vectorstore.
-
-    Returns:
-        JSON with success status, deletion count, and operation details
-    """
-    return await _delete_all_memories_impl(vectorstore_name=None)
 
 @app.delete('/api/memory/{vectorstore_name}/all')
 async def api_delete_all_Memories_vectorstore(vectorstore_name: str):
@@ -705,24 +661,24 @@ async def api_delete_all_Memories_vectorstore(vectorstore_name: str):
     validate_vectorstore_name(vectorstore_name)
     return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
 
-async def _delete_all_memories_impl(vectorstore_name: Optional[str] = None):
-    """Implementation for deleting all memories with vectorstore support.
-    
+async def _delete_all_memories_impl(vectorstore_name: str):
+    """Implementation for deleting all memories with explicit vectorstore support.
+
+    Args:
+        vectorstore_name: Explicit vectorstore name (required)
+
     Returns:
         JSON with success status, deletion count, and operation details
     """
     try:
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
-
         print("🗑️ NEME API: Clearing all atomic memories...")
-        print(f"📦 Vectorstore: {final_vectorstore_name}")
+        print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        result = memory_agent.memory_agent.clear_all_memories(vectorset_key=final_vectorstore_name)
+        result = memory_agent.memory_agent.clear_all_memories(vectorset_key=vectorstore_name)
 
         if result['success']:
             return {
@@ -730,7 +686,7 @@ async def _delete_all_memories_impl(vectorstore_name: Optional[str] = None):
                 'message': result['message'],
                 'memories_deleted': result['memories_deleted'],
                 'vectorset_existed': result['vectorset_existed'],
-                'vectorstore_name': final_vectorstore_name
+                'vectorstore_name': vectorstore_name
             }
         else:
             raise HTTPException(
@@ -743,46 +699,18 @@ async def _delete_all_memories_impl(vectorstore_name: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post('/api/memory/context')
-async def api_set_neme_context_default(request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
-    """Set current context for memory grounding in the default vectorstore.
+async def _set_context_impl(request: ContextSetRequest, additional_context: Dict[str, Any], vectorstore_name: str):
+    """Implementation for setting context with explicit vectorstore support.
 
     Args:
-        request: Context parameters (location, activity, people_present)
-        additional_context: Additional fields will be stored as environment context
+        vectorstore_name: Explicit vectorstore name (required)
 
-    Returns:
-        JSON with success status and updated context
-    """
-    return await _set_context_impl(request, additional_context, vectorstore_name=None)
-
-@app.post('/api/memory/{vectorstore_name}/context')
-async def api_set_neme_context_vectorstore(vectorstore_name: str, request: ContextSetRequest, additional_context: Dict[str, Any] = Body({})):
-    """Set current context for memory grounding in a specific vectorstore.
-
-    Args:
-        vectorstore_name: Name of the vectorstore to set context for
-        request: Context parameters (location, activity, people_present)
-        additional_context: Additional fields will be stored as environment context
-
-    Returns:
-        JSON with success status and updated context
-    """
-    validate_vectorstore_name(vectorstore_name)
-    return await _set_context_impl(request, additional_context, vectorstore_name=vectorstore_name)
-
-async def _set_context_impl(request: ContextSetRequest, additional_context: Dict[str, Any], vectorstore_name: Optional[str] = None):
-    """Implementation for setting context with vectorstore support.
-    
     Returns:
         JSON with success status and updated context
     """
     try:
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
-
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
 
         # Extract context parameters
         location = request.location
@@ -793,7 +721,7 @@ async def _set_context_impl(request: ContextSetRequest, additional_context: Dict
         environment_context = additional_context
 
         print(f"🌍 NEME API: Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
-        print(f"📦 Vectorstore: {final_vectorstore_name}")
+        print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Set context on underlying memory agent
         memory_agent.memory_agent.set_context(
@@ -812,22 +740,13 @@ async def _set_context_impl(request: ContextSetRequest, additional_context: Dict
                 'people_present': people_present,
                 'environment': environment_context
             },
-            'vectorstore_name': final_vectorstore_name
+            'vectorstore_name': vectorstore_name
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get('/api/memory/context')
-async def api_get_neme_context_default():
-    """Get current context information for memory grounding from the default vectorstore.
-
-    Returns:
-        JSON with success status and current context (temporal, spatial, social, environmental)
-    """
-    return await _get_context_impl(vectorstore_name=None)
 
 @app.get('/api/memory/{vectorstore_name}/context')
 async def api_get_neme_context_vectorstore(vectorstore_name: str):
@@ -842,9 +761,12 @@ async def api_get_neme_context_vectorstore(vectorstore_name: str):
     validate_vectorstore_name(vectorstore_name)
     return await _get_context_impl(vectorstore_name=vectorstore_name)
 
-async def _get_context_impl(vectorstore_name: Optional[str] = None):
-    """Implementation for getting context with vectorstore support.
-    
+async def _get_context_impl(vectorstore_name: str):
+    """Implementation for getting context with explicit vectorstore support.
+
+    Args:
+        vectorstore_name: Explicit vectorstore name (required)
+
     Returns:
         JSON with success status and current context (temporal, spatial, social, environmental)
     """
@@ -852,15 +774,12 @@ async def _get_context_impl(vectorstore_name: Optional[str] = None):
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        # Use vectorstore from URL path, fallback to default
-        final_vectorstore_name = get_vectorstore_name(vectorstore_name)
-
         current_context = memory_agent.memory_agent.core._get_current_context()
 
         return {
             'success': True,
             'context': current_context,
-            'vectorstore_name': final_vectorstore_name
+            'vectorstore_name': vectorstore_name
         }
 
     except HTTPException:
@@ -868,30 +787,7 @@ async def _get_context_impl(vectorstore_name: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# =============================================================================
-# BACKWARD COMPATIBILITY - DEPRECATED ENDPOINTS
-# =============================================================================
-# 
-# These endpoints maintain backward compatibility with the old API design.
-# They are deprecated and will be removed in a future version.
-# Client applications should migrate to the new vectorstore-aware endpoints.
 
-# DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
-@app.delete('/api/memory')  
-async def api_delete_all_Memories_legacy(request: Optional[MemoryDeleteRequest] = None):
-    """DEPRECATED: Use DELETE /api/memory/all or DELETE /api/memory/{vectorstore_name}/all
-    
-    Clear all atomic memories (Memories) from the system.
-    
-    Args:
-        request: Optional request body with vectorstore_name
-        
-    Returns:
-        JSON with success status, deletion count, and operation details
-    """
-    # Get vectorstore_name from request body if provided
-    vectorstore_name = request.vectorstore_name if request else None
-    return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
 
 # =============================================================================
 # K-LINE API - Reflective Operations (Inspired by Minsky's "K-lines")
@@ -902,18 +798,25 @@ async def api_delete_all_Memories_legacy(request: Optional[MemoryDeleteRequest] 
 # K-lines are the mechanism by which the mind constructs coherent mental states
 # from distributed memory fragments.
 #
+# All endpoints require explicit vectorstore names for proper isolation.
+#
 # These APIs handle:
 # - Constructing mental states by recalling and filtering relevant memories
 # - Question answering with confidence scoring and reasoning
 # - Extracting valuable memories from conversational data
 # - Advanced cognitive operations that combine multiple Memories
+#
+# API Structure: /api/memory/{vectorstore_name}/{operation}
 # =============================================================================
 
 
 
-@app.post('/api/memory/ask')
-async def api_kline_answer(request: KLineAnswerRequest):
+@app.post('/api/memory/{vectorstore_name}/ask')
+async def api_kline_answer(vectorstore_name: str, request: KLineAnswerRequest):
     """Answer a question using K-line construction and reasoning.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to search in
 
     This operation constructs a mental state from relevant Memories and applies
     sophisticated reasoning to answer questions with confidence scoring.
@@ -926,6 +829,8 @@ async def api_kline_answer(request: KLineAnswerRequest):
         and the constructed mental state (K-line)
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
@@ -938,11 +843,13 @@ async def api_kline_answer(request: KLineAnswerRequest):
             raise HTTPException(status_code=400, detail='Question is required')
 
         print(f"🤔 K-LINE API: Answering question via mental state construction: {question} (top_k: {top_k})")
+        print(f"📦 Vectorstore: {vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
 
         # Use the memory agent's sophisticated answer_question method
         # This constructs a K-line (mental state) and applies reasoning
+        # Note: answer_question method doesn't support vectorset_key parameter yet
         answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr, min_similarity=min_similarity)
 
         # Construct K-line (mental state) from the supporting memories
