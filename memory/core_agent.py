@@ -203,7 +203,7 @@ class MemoryAgent:
     #
     # These operations represent higher-level cognition built on the Neme substrate.
     # =========================================================================
-    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.7) -> Dict[str, Any]:
+    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> Dict[str, Any]:
         """Answer a question by constructing a K-line and applying reasoning.
 
         This method demonstrates the full K-line process:
@@ -217,11 +217,12 @@ class MemoryAgent:
             top_k: Number of Memories to activate for the mental state
             filterBy: Optional filter expression
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Structured answer with confidence, reasoning, and supporting Memories
         """
-        return self.reasoning.answer_question(question, top_k, filterBy, min_similarity)
+        return self.reasoning.answer_question(question, top_k, filterBy, min_similarity, vectorset_key)
 
     def extract_and_store_memories(self, raw_input: str, context_prompt: str,
                                  extraction_examples: Optional[List[Dict[str, str]]] = None,

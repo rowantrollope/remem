@@ -683,6 +683,7 @@ Respond with a JSON object:
         try:
             # VSIM vectorsetname VALUES LENGTH value1 value2 ... valueN [WITHSCORES] [COUNT count] [FILTER expression]
             vectorset_to_use = vectorset_key or self.VECTORSET_KEY
+            print(f"🔍 {vectorset_to_use}: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
             cmd = ["VSIM", vectorset_to_use, "VALUES", str(self.EMBEDDING_DIM)] + query_vector_values + ["WITHSCORES", "COUNT", str(top_k)]
 
             # Add user-provided filter if specified
@@ -692,6 +693,7 @@ Respond with a JSON object:
 
             result = self.redis_client.execute_command(*cmd)
 
+            print(f"🔍 Redis search result: {result}")
             # Parse results - VSIM returns [element1, score1, element2, score2, ...]
             memories = []
             for i in range(0, len(result), 2):

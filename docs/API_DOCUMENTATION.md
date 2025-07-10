@@ -18,6 +18,9 @@ Mental state construction and reasoning by combining Memories into coherent cogn
 ### 3. AGENT API - High-Level Orchestration
 Full conversational agents that orchestrate both Memories and K-lines for sophisticated interactions.
 
+### 4. ASYNC MEMORY API - Background Processing
+Asynchronous memory processing system for improved performance and hierarchical memory structures.
+
 ---
 
 ## NEME API
@@ -179,6 +182,69 @@ Intelligently extract valuable information from conversations and store as new M
   "apply_grounding": true
 }
 ```
+
+---
+
+## ASYNC MEMORY API
+
+### Store Raw Memory for Background Processing
+**POST** `/api/memory/{vectorstore_name}/store_raw`
+
+Store complete chat session data for asynchronous memory processing.
+
+```json
+{
+  "session_data": "Complete chat session text...",
+  "session_id": "optional-session-id",
+  "metadata": {
+    "user_id": "user123",
+    "session_type": "code_review"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "raw_memory_id": "uuid-here",
+  "queued_at": "2024-01-15T10:30:00Z",
+  "estimated_processing_time": "2-5 minutes",
+  "queue_position": 3
+}
+```
+
+### Get Processing Status
+**GET** `/api/memory/{vectorstore_name}/processing_status`
+
+Check background processor status and queue information.
+
+### Get Memory Hierarchy
+**GET** `/api/memory/{vectorstore_name}/hierarchy`
+
+Retrieve hierarchical memory data with filtering options.
+
+**Query Parameters:**
+- `session_id`: Filter by session ID
+- `memory_type`: Filter by type ('discrete', 'summary', 'raw', 'all')
+- `start_date`: Start date filter (ISO format)
+- `end_date`: End date filter (ISO format)
+- `limit`: Maximum results (1-1000, default: 50)
+
+### Get Session Details
+**GET** `/api/memory/{vectorstore_name}/session/{session_id}`
+
+Get complete information about a specific session.
+
+### Manual Cleanup
+**POST** `/api/memory/{vectorstore_name}/cleanup`
+
+Manually trigger cleanup of expired memory data.
+
+### Memory Statistics
+**GET** `/api/memory/{vectorstore_name}/stats`
+
+Get comprehensive memory statistics including hierarchy breakdown.
 
 ---
 

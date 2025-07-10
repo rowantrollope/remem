@@ -688,7 +688,7 @@ For every user request:
                 "potential_duplicates": 0
             }
 
-    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None) -> Dict[str, Any]:
+    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, vectorset_key: str = None) -> Dict[str, Any]:
         """Answer a question using the LangGraph workflow with proper confidence analysis.
 
         Uses LangGraph workflow for tool orchestration,
@@ -698,6 +698,7 @@ For every user request:
             question: The question to answer
             top_k: Number of memories to retrieve (passed to tools)
             filterBy: Optional filter expression
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary with structured response for API compatibility
@@ -723,7 +724,7 @@ For every user request:
 
         # For memory questions, use the original memory agent's sophisticated analysis
         # This preserves the confidence scoring and structured JSON responses
-        return self.memory_agent.answer_question(question, top_k=top_k, filterBy=filterBy)
+        return self.memory_agent.answer_question(question, top_k=top_k, filterBy=filterBy, vectorset_key=vectorset_key)
     
     def chat(self):
         """Start an interactive chat session."""

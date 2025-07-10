@@ -35,7 +35,7 @@ class MemoryReasoning:
         self.memory_processing = memory_processing
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.9) -> Dict[str, Any]:
+    def answer_question(self, question: str, top_k: int = 5, filterBy: str = None, min_similarity: float = 0.9, vectorset_key: str = None) -> Dict[str, Any]:
         """Answer a question using relevant memories and OpenAI.
 
         Args:
@@ -43,6 +43,7 @@ class MemoryReasoning:
             top_k: Number of memories to retrieve for context
             filterBy: Optional filter expression for VSIM command
             min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.9)
+            vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
             Dictionary with structured response containing:
@@ -68,7 +69,7 @@ class MemoryReasoning:
         embedding_query = validation_result.get("embedding_query") or validation_result["content"]
 
         # Search for relevant memories using embedding-optimized query
-        search_result = self.memory_core.search_memories(embedding_query, top_k, filterBy, min_similarity)
+        search_result = self.memory_core.search_memories(embedding_query, top_k, filterBy, min_similarity, vectorset_key)
         memories = search_result['memories'] if isinstance(search_result, dict) else search_result
 
         if not memories:

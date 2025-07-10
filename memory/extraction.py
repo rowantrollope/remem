@@ -460,15 +460,26 @@ Be selective and focus only on information that would improve future assistance.
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
-            response = tier1_client.chat_completion(
-                messages=[
-                    {"role": "user", "content": extraction_prompt}
-                ],
-                operation_type='memory_extraction',
-                bypass_cache=True,  # Memory extraction is highly context-dependent and accuracy-critical
-                temperature=0.2,  # Low temperature for consistent extraction
-                max_tokens=1500   # Allow for detailed extraction
-            )
+            # Check if client supports caching parameters (optimized client)
+            if hasattr(tier1_client, 'operation_type'):
+                response = tier1_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": extraction_prompt}
+                    ],
+                    operation_type='memory_extraction',
+                    bypass_cache=True,  # Memory extraction is highly context-dependent and accuracy-critical
+                    temperature=0.2,  # Low temperature for consistent extraction
+                    max_tokens=1500   # Allow for detailed extraction
+                )
+            else:
+                # Basic client without caching support
+                response = tier1_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": extraction_prompt}
+                    ],
+                    temperature=0.2,  # Low temperature for consistent extraction
+                    max_tokens=1500   # Allow for detailed extraction
+                )
 
             extraction_result = response['content'].strip()
             print(f"🔍 LLM extraction response received ({len(extraction_result)} characters)")

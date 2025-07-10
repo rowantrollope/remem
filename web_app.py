@@ -10,7 +10,7 @@ import uuid
 import requests
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException, Query, Path, Body
+from fastapi import FastAPI, HTTPException, Query, Path, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -201,6 +201,45 @@ class ConfigUpdateRequest(BaseModel):
     memory_agent: Optional[Dict[str, Any]] = Field(None, description="Memory agent configuration")
     web_server: Optional[Dict[str, Any]] = Field(None, description="Web server configuration")
     performance: Optional[Dict[str, Any]] = Field(None, description="Performance configuration")
+
+# =============================================================================
+# ASYNC MEMORY PROCESSING MODELS
+# =============================================================================
+
+class RawMemoryStoreRequest(BaseModel):
+    session_data: str = Field(..., description="Complete chat session text or conversation history")
+    session_id: Optional[str] = Field(None, description="Optional session ID for tracking")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (user_id, session_type, etc.)")
+
+class RawMemoryStoreResponse(BaseModel):
+    success: bool
+    raw_memory_id: str
+    queued_at: str
+    estimated_processing_time: str
+    queue_position: Optional[int] = None
+
+class ProcessedMemoryResponse(BaseModel):
+    success: bool
+    session_id: str
+    discrete_memories: List[Dict[str, Any]]
+    session_summary: Dict[str, Any]
+    processing_stats: Dict[str, Any]
+
+class MemoryHierarchyRequest(BaseModel):
+    session_id: Optional[str] = Field(None, description="Filter by session ID")
+    memory_type: Optional[str] = Field(None, description="Filter by memory type: 'discrete', 'summary', 'raw'")
+    start_date: Optional[str] = Field(None, description="Start date filter (ISO format)")
+    end_date: Optional[str] = Field(None, description="End date filter (ISO format)")
+    limit: int = Field(50, ge=1, le=1000, description="Maximum number of results")
+
+class BackgroundProcessorStatus(BaseModel):
+    success: bool
+    processor_running: bool
+    queue_size: int
+    processed_today: int
+    last_processed_at: Optional[str]
+    processing_interval_seconds: int
+    retention_policy: Dict[str, Any]
 
 def init_llm_manager():
     """Initialize the LLM manager with current configuration."""
@@ -849,8 +888,7 @@ async def api_kline_answer(vectorstore_name: str, request: KLineAnswerRequest):
 
         # Use the memory agent's sophisticated answer_question method
         # This constructs a K-line (mental state) and applies reasoning
-        # Note: answer_question method doesn't support vectorset_key parameter yet
-        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr, min_similarity=min_similarity)
+        answer_response = memory_agent.memory_agent.answer_question(question, top_k=top_k, filterBy=filter_expr, min_similarity=min_similarity, vectorset_key=vectorstore_name)
 
         # Construct K-line (mental state) from the supporting memories
         supporting_memories = answer_response.get('supporting_memories', [])
@@ -874,6 +912,7 @@ async def api_kline_answer(vectorstore_name: str, request: KLineAnswerRequest):
         response_data = {
             'success': True,
             'question': question,
+            'vectorstore_name': vectorstore_name,
             **answer_response,  # Spread the structured response (answer, confidence, supporting_memories, etc.)
             'kline': kline_result  # Include the constructed mental state
         }
@@ -947,6 +986,562 @@ async def api_agent_chat(request: AgentChatRequest):
 
 
 
+
+# =============================================================================
+# ASYNC MEMORY PROCESSING APIs - Raw memory storage and background processing
+# =============================================================================
+
+@app.post('/api/memory/{vectorstore_name}/store_raw')
+async def api_store_raw_memory(vectorstore_name: str, request: RawMemoryStoreRequest):
+    """Store raw chat session data for asynchronous memory processing.
+
+    This endpoint accepts complete chat session histories and queues them for
+    background processing. The background processor will extract discrete memories,
+    generate session summaries, and create a hierarchical memory structure.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to store processed memories in
+        request: Raw memory data with session content and metadata
+
+    Returns:
+        JSON with success status, raw_memory_id, and queue information
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        session_data = request.session_data.strip()
+        if not session_data:
+            raise HTTPException(status_code=400, detail='session_data is required')
+
+        session_id = request.session_id or str(uuid.uuid4())
+        metadata = request.metadata or {}
+
+        # Generate unique ID for this raw memory
+        raw_memory_id = str(uuid.uuid4())
+        current_time = datetime.now(timezone.utc)
+
+        # Create raw memory record
+        raw_memory_record = {
+            "raw_memory_id": raw_memory_id,
+            "session_id": session_id,
+            "session_data": session_data,
+            "metadata": metadata,
+            "vectorstore_name": vectorstore_name,
+            "created_at": current_time.isoformat(),
+            "status": "queued",
+            "processing_attempts": 0
+        }
+
+        # Get Redis client from memory agent
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        redis_client = memory_agent.memory_agent.core.redis_client
+
+        # Store raw memory in Redis
+        raw_memory_key = f"{vectorstore_name}:raw_memory:{raw_memory_id}"
+        redis_client.set(raw_memory_key, json.dumps(raw_memory_record))
+
+        # Add to processing queue (sorted set with timestamp as score)
+        queue_key = "RAW_MEMORY_QUEUE"
+        timestamp_score = current_time.timestamp()
+        redis_client.zadd(queue_key, {raw_memory_key: timestamp_score})
+
+        # Get current queue position
+        queue_position = redis_client.zrank(queue_key, raw_memory_key)
+        queue_size = redis_client.zcard(queue_key)
+
+        print(f"📥 ASYNC MEMORY: Queued raw memory {raw_memory_id} for processing")
+        print(f"📦 Vectorstore: {vectorstore_name}")
+        print(f"📊 Queue position: {queue_position + 1}/{queue_size}")
+
+        # Estimate processing time based on queue position
+        estimated_time = "1-2 minutes" if queue_position < 5 else f"{queue_position * 2}-{queue_position * 3} minutes"
+
+        return RawMemoryStoreResponse(
+            success=True,
+            raw_memory_id=raw_memory_id,
+            queued_at=current_time.isoformat(),
+            estimated_processing_time=estimated_time,
+            queue_position=queue_position + 1
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get('/api/memory/{vectorstore_name}/processing_status')
+async def api_get_processing_status(vectorstore_name: str):
+    """Get status of the background memory processing system.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to check status for
+
+    Returns:
+        JSON with processor status, queue size, and processing statistics
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        redis_client = memory_agent.memory_agent.core.redis_client
+
+        # Get queue information
+        queue_key = "RAW_MEMORY_QUEUE"
+        queue_size = redis_client.zcard(queue_key)
+
+        # Get processing statistics for today
+        today = datetime.now(timezone.utc).date()
+        stats_key = f"processing_stats:{today.isoformat()}"
+        daily_stats = redis_client.hgetall(stats_key)
+
+        processed_today = int(daily_stats.get(b'processed_count', 0)) if daily_stats else 0
+        last_processed_at = daily_stats.get(b'last_processed_at', b'').decode() if daily_stats else None
+
+        # Check if background processor is running (simplified check)
+        processor_status_key = "background_processor:status"
+        processor_info = redis_client.hgetall(processor_status_key)
+        processor_running = False
+        processing_interval = 60  # Default 60 seconds
+
+        if processor_info:
+            last_heartbeat = processor_info.get(b'last_heartbeat', b'').decode()
+            if last_heartbeat:
+                try:
+                    heartbeat_time = datetime.fromisoformat(last_heartbeat.replace('Z', '+00:00'))
+                    # Consider processor running if heartbeat is within last 2 minutes
+                    processor_running = (datetime.now(timezone.utc) - heartbeat_time).total_seconds() < 120
+                except:
+                    pass
+            processing_interval = int(processor_info.get(b'interval_seconds', 60))
+
+        # Get retention policy from config
+        retention_policy = {
+            "raw_transcripts_days": 30,  # Keep raw transcripts for 30 days
+            "processed_sessions_days": 365,  # Keep processed sessions for 1 year
+            "cleanup_interval_hours": 24  # Run cleanup daily
+        }
+
+        return BackgroundProcessorStatus(
+            success=True,
+            processor_running=processor_running,
+            queue_size=queue_size,
+            processed_today=processed_today,
+            last_processed_at=last_processed_at,
+            processing_interval_seconds=processing_interval,
+            retention_policy=retention_policy
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get('/api/memory/{vectorstore_name}/hierarchy')
+async def api_get_memory_hierarchy(
+    vectorstore_name: str,
+    session_id: Optional[str] = Query(None, description="Filter by session ID"),
+    memory_type: Optional[str] = Query(None, description="Filter by memory type: 'discrete', 'summary', 'raw'"),
+    start_date: Optional[str] = Query(None, description="Start date filter (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date filter (ISO format)"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum number of results")
+):
+    """Retrieve memory hierarchy data including discrete memories, session summaries, and raw transcripts.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to retrieve from
+        request: Query parameters for filtering results
+
+    Returns:
+        JSON with hierarchical memory data organized by type and session
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        redis_client = memory_agent.memory_agent.core.redis_client
+
+        # Parse date filters
+        start_date_obj = None
+        end_date_obj = None
+        if start_date:
+            start_date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        if end_date:
+            end_date_obj = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+
+        results = {
+            "discrete_memories": [],
+            "session_summaries": [],
+            "raw_transcripts": [],
+            "total_count": 0,
+            "filtered_by": {
+                "session_id": session_id,
+                "memory_type": memory_type,
+                "date_range": f"{start_date} to {end_date}" if start_date or end_date else None
+            }
+        }
+
+        # Get session summaries
+        if not memory_type or memory_type in ['summary', 'all']:
+            summary_pattern = f"{vectorstore_name}:session_summary:*"
+            if session_id:
+                summary_pattern = f"{vectorstore_name}:session_summary:{session_id}"
+
+            for key in redis_client.scan_iter(match=summary_pattern):
+                key_str = key.decode() if isinstance(key, bytes) else key
+                try:
+                    summary_data = redis_client.get(key_str)
+                    if summary_data:
+                        summary = json.loads(summary_data.decode())
+
+                        # Apply date filter
+                        if start_date_obj or end_date_obj:
+                            created_at = datetime.fromisoformat(summary["created_at"].replace('Z', '+00:00'))
+                            if start_date_obj and created_at < start_date_obj:
+                                continue
+                            if end_date_obj and created_at > end_date_obj:
+                                continue
+
+                        results["session_summaries"].append(summary)
+
+                        if len(results["session_summaries"]) >= limit:
+                            break
+                except:
+                    continue
+
+        # Get raw transcripts
+        if not memory_type or memory_type in ['raw', 'all']:
+            raw_pattern = f"{vectorstore_name}:raw_memory:*"
+
+            for key in redis_client.scan_iter(match=raw_pattern):
+                key_str = key.decode() if isinstance(key, bytes) else key
+                try:
+                    raw_data = redis_client.get(key_str)
+                    if raw_data:
+                        raw_memory = json.loads(raw_data.decode())
+
+                        # Apply session filter
+                        if session_id and raw_memory.get("session_id") != session_id:
+                            continue
+
+                        # Apply date filter
+                        if start_date_obj or end_date_obj:
+                            created_at = datetime.fromisoformat(raw_memory["created_at"].replace('Z', '+00:00'))
+                            if start_date_obj and created_at < start_date_obj:
+                                continue
+                            if end_date_obj and created_at > end_date_obj:
+                                continue
+
+                        # Remove session_data from response to keep it lightweight
+                        raw_summary = {k: v for k, v in raw_memory.items() if k != "session_data"}
+                        raw_summary["has_session_data"] = bool(raw_memory.get("session_data"))
+                        raw_summary["session_data_length"] = len(raw_memory.get("session_data", ""))
+
+                        results["raw_transcripts"].append(raw_summary)
+
+                        if len(results["raw_transcripts"]) >= limit:
+                            break
+                except:
+                    continue
+
+        # Get discrete memories (from vectorset)
+        if not memory_type or memory_type in ['discrete', 'all']:
+            # Use existing search functionality to get recent memories
+            search_query = f"session_id:{session_id}" if session_id else "*"
+
+            try:
+                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                    query=search_query,
+                    top_k=min(limit, 100),
+                    min_similarity=0.0,  # Get all memories
+                    vectorset_key=vectorstore_name
+                )
+
+                discrete_memories = search_result.get('memories', [])
+
+                # Apply date filter to discrete memories
+                if start_date_obj or end_date_obj:
+                    filtered_memories = []
+                    for memory in discrete_memories:
+                        try:
+                            created_at = datetime.fromisoformat(memory["created_at"].replace('Z', '+00:00'))
+                            if start_date_obj and created_at < start_date_obj:
+                                continue
+                            if end_date_obj and created_at > end_date_obj:
+                                continue
+                            filtered_memories.append(memory)
+                        except:
+                            filtered_memories.append(memory)  # Include if date parsing fails
+                    discrete_memories = filtered_memories
+
+                results["discrete_memories"] = discrete_memories[:limit]
+
+            except Exception as e:
+                print(f"⚠️ Error retrieving discrete memories: {e}")
+                results["discrete_memories"] = []
+
+        # Calculate total count
+        results["total_count"] = (len(results["discrete_memories"]) +
+                                len(results["session_summaries"]) +
+                                len(results["raw_transcripts"]))
+
+        # Sort results by creation date (newest first)
+        for memory_type in ["discrete_memories", "session_summaries", "raw_transcripts"]:
+            try:
+                results[memory_type].sort(
+                    key=lambda x: x.get("created_at", ""),
+                    reverse=True
+                )
+            except:
+                pass
+
+        return {
+            "success": True,
+            "vectorstore_name": vectorstore_name,
+            "results": results,
+            "query_params": {
+                "session_id": session_id,
+                "memory_type": memory_type,
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": limit
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get('/api/memory/{vectorstore_name}/session/{session_id}')
+async def api_get_session_details(vectorstore_name: str, session_id: str):
+    """Get detailed information about a specific session including all related memories.
+
+    Args:
+        vectorstore_name: Name of the vectorstore
+        session_id: ID of the session to retrieve
+
+    Returns:
+        JSON with complete session information and related memories
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        redis_client = memory_agent.memory_agent.core.redis_client
+
+        # Get session summary
+        summary_key = f"{vectorstore_name}:session_summary:{session_id}"
+        summary_data = redis_client.get(summary_key)
+        session_summary = None
+        if summary_data:
+            session_summary = json.loads(summary_data.decode())
+
+        # Get raw transcript
+        raw_transcript = None
+        raw_pattern = f"{vectorstore_name}:raw_memory:*"
+        for key in redis_client.scan_iter(match=raw_pattern):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            try:
+                raw_data = redis_client.get(key_str)
+                if raw_data:
+                    raw_memory = json.loads(raw_data.decode())
+                    if raw_memory.get("session_id") == session_id:
+                        raw_transcript = raw_memory
+                        break
+            except:
+                continue
+
+        # Get related discrete memories
+        discrete_memories = []
+        memories_key = f"{vectorstore_name}:session_memories:{session_id}"
+        memory_ids = redis_client.smembers(memories_key)
+
+        if memory_ids:
+            # Get memory details from vectorset
+            for memory_id in memory_ids:
+                memory_id_str = memory_id.decode() if isinstance(memory_id, bytes) else memory_id
+                try:
+                    # Search for this specific memory
+                    search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                        query=memory_id_str,
+                        top_k=1,
+                        min_similarity=0.0,
+                        vectorset_key=vectorstore_name
+                    )
+
+                    memories = search_result.get('memories', [])
+                    for memory in memories:
+                        if memory.get('memory_id') == memory_id_str:
+                            discrete_memories.append(memory)
+                            break
+                except:
+                    continue
+
+        if not session_summary and not raw_transcript and not discrete_memories:
+            raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "vectorstore_name": vectorstore_name,
+            "session_summary": session_summary,
+            "raw_transcript": raw_transcript,
+            "discrete_memories": discrete_memories,
+            "memory_count": len(discrete_memories),
+            "has_raw_data": bool(raw_transcript),
+            "has_summary": bool(session_summary)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post('/api/memory/{vectorstore_name}/cleanup')
+async def api_cleanup_memory_data(vectorstore_name: str, retention_days: int = Query(30, ge=1, le=365)):
+    """Manually trigger cleanup of expired memory data.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to clean up
+        retention_days: Days to retain raw transcripts (default: 30)
+
+    Returns:
+        JSON with cleanup statistics
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        # Import the async processor for cleanup functionality
+        from memory.async_processor import AsyncMemoryProcessor
+
+        # Create processor instance for cleanup
+        processor = AsyncMemoryProcessor(
+            redis_host=memory_agent.memory_agent.core.redis_client.connection_pool.connection_kwargs.get('host'),
+            redis_port=memory_agent.memory_agent.core.redis_client.connection_pool.connection_kwargs.get('port'),
+            redis_db=memory_agent.memory_agent.core.redis_client.connection_pool.connection_kwargs.get('db'),
+            retention_days=retention_days
+        )
+
+        # Run cleanup
+        cleanup_result = processor.cleanup_expired_data()
+
+        return {
+            "success": True,
+            "vectorstore_name": vectorstore_name,
+            "retention_days": retention_days,
+            "cleanup_result": cleanup_result,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get('/api/memory/{vectorstore_name}/stats')
+async def api_get_memory_stats(vectorstore_name: str):
+    """Get comprehensive memory statistics including hierarchy breakdown.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to get stats for
+
+    Returns:
+        JSON with detailed memory statistics
+    """
+    validate_vectorstore_name(vectorstore_name)
+
+    try:
+        if not memory_agent:
+            raise HTTPException(status_code=500, detail='Memory agent not initialized')
+
+        redis_client = memory_agent.memory_agent.core.redis_client
+
+        # Get basic memory info
+        basic_stats = await _get_memory_info_impl(vectorstore_name=vectorstore_name)
+
+        # Count session summaries
+        summary_pattern = f"{vectorstore_name}:session_summary:*"
+        summary_count = 0
+        for _ in redis_client.scan_iter(match=summary_pattern):
+            summary_count += 1
+
+        # Count raw memories
+        raw_pattern = f"{vectorstore_name}:raw_memory:*"
+        raw_count = 0
+        processed_count = 0
+        queued_count = 0
+        error_count = 0
+
+        for key in redis_client.scan_iter(match=raw_pattern):
+            raw_count += 1
+            try:
+                raw_data = redis_client.get(key)
+                if raw_data:
+                    raw_memory = json.loads(raw_data.decode())
+                    status = raw_memory.get("status", "unknown")
+                    if status == "processed":
+                        processed_count += 1
+                    elif status == "queued":
+                        queued_count += 1
+                    elif status == "error":
+                        error_count += 1
+            except:
+                continue
+
+        # Get queue size
+        queue_size = redis_client.zcard("RAW_MEMORY_QUEUE")
+
+        # Get processing stats for today
+        today = datetime.now(timezone.utc).date()
+        stats_key = f"processing_stats:{today.isoformat()}"
+        daily_stats = redis_client.hgetall(stats_key)
+        processed_today = int(daily_stats.get(b'processed_count', 0)) if daily_stats else 0
+
+        # Calculate storage usage (approximate)
+        total_keys = 0
+        for pattern in [f"{vectorstore_name}:*", "RAW_MEMORY_QUEUE", f"processing_stats:*"]:
+            for _ in redis_client.scan_iter(match=pattern):
+                total_keys += 1
+
+        return {
+            "success": True,
+            "vectorstore_name": vectorstore_name,
+            "basic_stats": basic_stats,
+            "hierarchy_stats": {
+                "discrete_memories": basic_stats.get("memory_count", 0),
+                "session_summaries": summary_count,
+                "raw_transcripts": raw_count,
+                "total_items": basic_stats.get("memory_count", 0) + summary_count + raw_count
+            },
+            "processing_stats": {
+                "processed": processed_count,
+                "queued": queued_count,
+                "errors": error_count,
+                "queue_size": queue_size,
+                "processed_today": processed_today
+            },
+            "storage_stats": {
+                "total_redis_keys": total_keys,
+                "estimated_memory_usage": "Use Redis MEMORY USAGE command for precise measurements"
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =============================================================================
 # CHAT APIs - General purpose chat interface
