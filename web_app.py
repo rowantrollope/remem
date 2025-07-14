@@ -8,6 +8,7 @@ import os
 import json
 import uuid
 import requests
+import redis
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, Query, Path, Body, Depends
@@ -611,14 +612,59 @@ async def _get_memory_info_impl(vectorstore_name: str):
         if not memory_agent:
             raise HTTPException(status_code=500, detail='Memory agent not initialized')
 
-        # Get comprehensive memory information from underlying agent
-        memory_info = memory_agent.memory_agent.get_memory_info()
+        redis_client = memory_agent.memory_agent.core.redis_client
 
-        if 'error' in memory_info:
-            raise HTTPException(status_code=500, detail=memory_info['error'])
+        try:
+            # Get memory count using VCARD for the specific vectorstore
+            memory_count = redis_client.execute_command("VCARD", vectorstore_name)
+            memory_count = int(memory_count) if memory_count else 0
 
-        # Add vectorstore name to response
-        memory_info['vectorstore_name'] = vectorstore_name
+            # Get vector dimension using VDIM for the specific vectorstore
+            dimension = redis_client.execute_command("VDIM", vectorstore_name)
+            dimension = int(dimension) if dimension else 0
+
+            # Get detailed vector set info using VINFO for the specific vectorstore
+            vinfo_result = redis_client.execute_command("VINFO", vectorstore_name)
+
+            # Parse VINFO result (returns key-value pairs)
+            vinfo_dict = {}
+            if vinfo_result:
+                for i in range(0, len(vinfo_result), 2):
+                    if i + 1 < len(vinfo_result):
+                        key = vinfo_result[i].decode('utf-8') if isinstance(vinfo_result[i], bytes) else vinfo_result[i]
+                        value = vinfo_result[i + 1]
+                        # Try to decode bytes, but keep original type for numbers
+                        if isinstance(value, bytes):
+                            try:
+                                value = value.decode('utf-8')
+                            except:
+                                value = str(value)
+                        vinfo_dict[key] = value
+
+            memory_info = {
+                'memory_count': memory_count,
+                'vector_dimension': dimension,
+                'vectorset_name': vectorstore_name,
+                'vectorset_info': vinfo_dict,
+                'embedding_model': 'text-embedding-ada-002',
+                'redis_host': redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
+                'redis_port': redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+
+        except redis.ResponseError:
+            # VectorSet doesn't exist yet - this is normal when no memories have been stored
+            memory_info = {
+                'memory_count': 0,
+                'vector_dimension': 0,
+                'vectorset_name': vectorstore_name,
+                'vectorset_info': {},
+                'embedding_model': 'text-embedding-ada-002',
+                'redis_host': redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
+                'redis_port': redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'note': 'No memories stored yet - VectorSet will be created when first memory is added'
+            }
 
         return {
             'success': True,
@@ -629,6 +675,19 @@ async def _get_memory_info_impl(vectorstore_name: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete('/api/memory/{vectorstore_name}/all')
+async def api_delete_all_Memories_vectorstore(vectorstore_name: str):
+    """Clear all atomic memories (Memories) from a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to clear
+
+    Returns:
+        JSON with success status, deletion count, and operation details
+    """
+    validate_vectorstore_name(vectorstore_name)
+    return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
 
 @app.delete('/api/memory/{vectorstore_name}/{memory_id}')
 async def api_delete_neme_vectorstore(vectorstore_name: str, memory_id: str):
@@ -678,7 +737,7 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: str):
             }
         else:
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f'Neme {memory_id} not found or could not be deleted'
             )
 
@@ -686,19 +745,6 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete('/api/memory/{vectorstore_name}/all')
-async def api_delete_all_Memories_vectorstore(vectorstore_name: str):
-    """Clear all atomic memories (Memories) from a specific vectorstore.
-
-    Args:
-        vectorstore_name: Name of the vectorstore to clear
-
-    Returns:
-        JSON with success status, deletion count, and operation details
-    """
-    validate_vectorstore_name(vectorstore_name)
-    return await _delete_all_memories_impl(vectorstore_name=vectorstore_name)
 
 async def _delete_all_memories_impl(vectorstore_name: str):
     """Implementation for deleting all memories with explicit vectorstore support.
@@ -1770,7 +1816,8 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
                     query=search_query,
                     top_k=top_k,
-                    min_similarity=min_similarity
+                    min_similarity=min_similarity,
+                    vectorset_key="memories"  # Default vectorstore for agent sessions
                 )
                 memory_results = search_result['memories']
                 filtering_info = search_result['filtering_info']
@@ -1779,7 +1826,8 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
                 search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
                     query=user_message,
                     top_k=top_k,
-                    min_similarity=min_similarity
+                    min_similarity=min_similarity,
+                    vectorset_key="memories"  # Default vectorstore for agent sessions
                 )
                 memory_results = search_result['memories']
                 filtering_info = search_result['filtering_info']
