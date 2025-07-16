@@ -108,7 +108,7 @@ def test_contextual_grounding():
     except Exception as e:
         print(f"❌ Test failed: {e}")
         print("\nNote: This test requires:")
-        print("1. Redis server running on localhost:6381 with RedisSearch")
+        print("1. Redis server running on localhost:6379 with RedisSearch")
         print("2. OpenAI API key in environment")
         return None
 

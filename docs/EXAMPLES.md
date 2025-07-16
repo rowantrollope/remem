@@ -153,7 +153,7 @@ Finally, we can have natural conversations that automatically use memory:
 
 ```javascript
 // Create an agent session
-const session = await fetch('/api/agent/session', {
+const session = await fetch('/api/agent/user_123_memories/session', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({

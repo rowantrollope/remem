@@ -72,7 +72,7 @@ def main():
     test_data = {
         "redis": {
             "host": "localhost",
-            "port": 6381
+            "port": 6379
         }
     }
     test_endpoint("POST", "/config/test", test_data, "Test Redis configuration")

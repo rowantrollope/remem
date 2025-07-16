@@ -263,7 +263,7 @@ Complete cognitive architecture with memory integration.
 ```
 
 ### Create Agent Session
-**POST** `/api/agent/session`
+**POST** `/api/agent/{vectorstore_name}/session`
 
 Create persistent conversational session with memory capabilities.
 
@@ -278,8 +278,14 @@ Create persistent conversational session with memory capabilities.
 }
 ```
 
+Parameters:
+- `vectorstore_name` (path parameter, required): Name of the vectorstore to use for memory operations
+- `system_prompt` (string, required): Custom system prompt for the agent session
+- `session_id` (string, optional): Custom session ID, auto-generated if not provided
+- `config` (object, optional): Additional configuration options
+
 ### Chat with Session
-**POST** `/api/agent/session/{session_id}`
+**POST** `/api/agent/{vectorstore_name}/session/{session_id}`
 
 Send messages to an agent session with full cognitive architecture.
 
@@ -293,15 +299,17 @@ Send messages to an agent session with full cognitive architecture.
 ```
 
 Parameters:
+- `vectorstore_name` (path parameter, required): Name of the vectorstore to use for memory operations (must match session's vectorstore)
+- `session_id` (path parameter, required): The agent session ID
 - `message` (string, required): The user's message
 - `top_k` (integer, optional): Number of memories to search and return (default: 10)
 - `store_memory` (boolean, optional): Whether to extract and store memories (default: true)
 - `stream` (boolean, optional): Whether to stream the response (default: false)
 
 ### Session Management
-**GET** `/api/agent/session/{session_id}` - Get session info
-**DELETE** `/api/agent/session/{session_id}` - Delete session
-**GET** `/api/agent/sessions` - List all sessions
+**GET** `/api/agent/{vectorstore_name}/session/{session_id}` - Get session info
+**DELETE** `/api/agent/{vectorstore_name}/session/{session_id}` - Delete session
+**GET** `/api/agent/{vectorstore_name}/sessions` - List sessions for vectorstore
 
 ---
 

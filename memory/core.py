@@ -103,7 +103,13 @@ class MemoryCore:
         redis_host = redis_host or os.getenv("REDIS_HOST", "localhost")
         redis_port = redis_port or int(os.getenv("REDIS_PORT", "6379"))
         redis_db = redis_db or int(os.getenv("REDIS_DB", "0"))
-        
+
+        # Debug logging
+        print(f"🔍 MEMORY: Redis connection details:")
+        print(f"  Host: {redis_host}")
+        print(f"  Port: {redis_port} (from param: {redis_port}, from env: {os.getenv('REDIS_PORT', 'not set')})")
+        print(f"  DB: {redis_db}")
+
         # Initialize OpenAI client
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 

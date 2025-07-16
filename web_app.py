@@ -52,7 +52,7 @@ except Exception as e:
 app_config = {
     "redis": {
         "host": os.getenv("REDIS_HOST", "localhost"),
-        "port": int(os.getenv("REDIS_PORT", "6381")),
+        "port": int(os.getenv("REDIS_PORT", "6379")),
         "db": int(os.getenv("REDIS_DB", "0")),
         "vectorset_key": "memories"
     },
@@ -1593,14 +1593,19 @@ async def api_get_memory_stats(vectorstore_name: str):
 # CHAT APIs - General purpose chat interface
 # =============================================================================
 
-@app.post('/api/agent/session')
-async def api_create_agent_session(request: AgentSessionCreateRequest):
+@app.post('/api/agent/{vectorstore_name}/session')
+async def api_create_agent_session(vectorstore_name: str, request: AgentSessionCreateRequest):
     """Create a new agent session with integrated memory capabilities.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to use for memory operations
 
     Returns:
         JSON with session_id and confirmation
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         system_prompt = request.system_prompt.strip()
         if not system_prompt:
             raise HTTPException(status_code=400, detail='system_prompt is required')
@@ -1621,7 +1626,8 @@ async def api_create_agent_session(request: AgentSessionCreateRequest):
             'config': config,
             'created_at': datetime.now(timezone.utc).isoformat(),
             'last_activity': datetime.now(timezone.utc).isoformat(),
-            'use_memory': use_memory
+            'use_memory': use_memory,
+            'vectorstore_name': vectorstore_name
         }
         print(f"")
         # Add memory-specific fields if memory is enabled
@@ -1651,8 +1657,8 @@ async def api_create_agent_session(request: AgentSessionCreateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post('/api/agent/session/{session_id}')
-async def api_agent_session_message(session_id: str = Path(..., description="The agent session ID"), request: AgentSessionMessageRequest = Body(...)):
+@app.post('/api/agent/{vectorstore_name}/session/{session_id}')
+async def api_agent_session_message(vectorstore_name: str, session_id: str = Path(..., description="The agent session ID"), request: AgentSessionMessageRequest = Body(...)):
     """Send a message to an agent session with full cognitive architecture.
 
     This endpoint provides the complete agent experience:
@@ -1662,6 +1668,7 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
     - Automatically extracts new memories from conversations
 
     Args:
+        vectorstore_name: Name of the vectorstore to use for memory operations
         session_id: The agent session ID
         request: Request body with message and options
 
@@ -1670,6 +1677,8 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
         For memory-enabled sessions, includes 'memory_context' with relevant memories used in the response.
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
             raise HTTPException(status_code=404, detail='Agent session not found')
 
@@ -1693,14 +1702,19 @@ async def api_agent_session_message(session_id: str = Path(..., description="The
         session = app.chat_sessions[session_id]
         use_memory = session.get('use_memory', False)
 
+        # Verify the vectorstore matches the session's vectorstore
+        session_vectorstore = session.get('vectorstore_name')
+        if session_vectorstore and session_vectorstore != vectorstore_name:
+            raise HTTPException(status_code=400, detail=f'Session was created with vectorstore "{session_vectorstore}" but request uses "{vectorstore_name}"')
+
         if use_memory:
-            print(f"1) User said: '{message[:80]}{'...' if len(message) > 80 else ''}'")
+            print(f"1) User said: '{message[:80]}{'...' if len(message) > 80 else ''}' (vectorstore: {vectorstore_name})")
         else:
             print(f"💬 [{session_id}] AGENT API: Agent session (memory: disabled): User: {message}")
 
         # Handle memory-enabled sessions
         if use_memory:
-            return _handle_memory_enabled_message(session_id, session, message, stream, store_memory, top_k, min_similarity)
+            return _handle_memory_enabled_message(session_id, session, message, stream, store_memory, top_k, min_similarity, vectorstore_name)
         else:
             # Add user message to session for non-memory sessions
             user_message = {
@@ -1768,7 +1782,7 @@ def _handle_standard_message(session_id, session, stream):
     }
 
 
-def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True, top_k=10, min_similarity=0.9):
+def _handle_memory_enabled_message(session_id, session, user_message, stream, store_memory=True, top_k=10, min_similarity=0.9, vectorstore_name="memories"):
     """Handle message processing for sessions with memory enabled."""
     if not memory_agent:
         raise HTTPException(status_code=500, detail='Memory agent not initialized but session requires memory')
@@ -1817,7 +1831,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
                     query=search_query,
                     top_k=top_k,
                     min_similarity=min_similarity,
-                    vectorset_key="memories"  # Default vectorstore for agent sessions
+                    vectorset_key=vectorstore_name
                 )
                 memory_results = search_result['memories']
                 filtering_info = search_result['filtering_info']
@@ -1827,7 +1841,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
                     query=user_message,
                     top_k=top_k,
                     min_similarity=min_similarity,
-                    vectorset_key="memories"  # Default vectorstore for agent sessions
+                    vectorset_key=vectorstore_name
                 )
                 memory_results = search_result['memories']
                 filtering_info = search_result['filtering_info']
@@ -1906,7 +1920,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
 
         # Check if we should extract memories (only if store_memory is True)
         if store_memory:
-            _check_and_extract_memories(session_id, session)
+            _check_and_extract_memories(session_id, session, vectorstore_name)
         else:
             print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
 
@@ -1935,7 +1949,7 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
             print("✅ Restored original memory processing module")
 
 
-def _check_and_extract_memories(session_id, session):
+def _check_and_extract_memories(session_id, session, vectorstore_name="memories"):
     """Extract memories from the most recent user message."""
     buffer = session.get('conversation_buffer', [])
 
@@ -1956,11 +1970,12 @@ def _check_and_extract_memories(session_id, session):
         conversation_text = f"User: {latest_user_message['content']}\n"
 
         # STEP 1: Search for existing relevant memories first (context-aware approach)
-        print(f"1) Searching for existing memories related to: '{latest_user_message['content'][:50]}...'")
+        print(f"1) Searching for existing memories related to: '{latest_user_message['content'][:50]}...' (vectorstore: {vectorstore_name})")
         existing_memories = memory_agent.memory_agent.search_memories(
             latest_user_message['content'],
             top_k=10,
-            min_similarity=0.7
+            min_similarity=0.7,
+            vectorset_key=vectorstore_name
         )
 
         if existing_memories:
@@ -1969,18 +1984,31 @@ def _check_and_extract_memories(session_id, session):
             print(f"2) No existing relevant memories found")
 
         # STEP 2: Extract memories using context-aware approach
-        result = memory_agent.memory_agent.extract_and_store_memories(
-            raw_input=conversation_text,
-            context_prompt=session.get('memory_context', 'Extract ONLY user preferences, constraints, facts, and important personal details from the user messages. Do NOT extract assistant suggestions or recommendations.'),
-            apply_grounding=True,
-            existing_memories=existing_memories  # Pass existing memories for context-aware extraction
-        )
+        # Temporarily change the memory agent's default vectorset if needed
+        original_vectorset = memory_agent.memory_agent.core.VECTORSET_KEY
+        if vectorstore_name != original_vectorset:
+            memory_agent.memory_agent.core.VECTORSET_KEY = vectorstore_name
+            print(f"3) Temporarily switched vectorset from '{original_vectorset}' to '{vectorstore_name}' for extraction")
+
+        try:
+            result = memory_agent.memory_agent.extract_and_store_memories(
+                raw_input=conversation_text,
+                context_prompt=session.get('memory_context', 'Extract ONLY user preferences, constraints, facts, and important personal details from the user messages. Do NOT extract assistant suggestions or recommendations.'),
+                apply_grounding=True,
+                existing_memories=existing_memories  # Pass existing memories for context-aware extraction
+            )
+        finally:
+            # Restore original vectorset
+            if vectorstore_name != original_vectorset:
+                memory_agent.memory_agent.core.VECTORSET_KEY = original_vectorset
+                print(f"4) Restored vectorset to '{original_vectorset}'")
+
 
         if result["total_extracted"] > 0:
             extracted_memories = result.get("extracted_memories", [])
             memory_texts = [mem.get("final_text", mem.get("raw_text", "Unknown")) for mem in extracted_memories]
             print(f"5) Identified {result['total_extracted']} memories: {', '.join([f'"{text[:40]}{"..." if len(text) > 40 else ""}"' for text in memory_texts])}")
-            print(f"6) Saved {result['total_extracted']} memories to database")
+            print(f"6) Saved {result['total_extracted']} memories to vectorstore '{vectorstore_name}'")
             session['last_extraction'] = datetime.now(timezone.utc).isoformat()
         else:
             print(f"5) No memories identified for extraction")
@@ -1995,21 +2023,29 @@ def _check_and_extract_memories(session_id, session):
 
 
 
-@app.get('/api/agent/session/{session_id}')
-async def api_get_agent_session(session_id: str = Path(..., description="The agent session ID")):
+@app.get('/api/agent/{vectorstore_name}/session/{session_id}')
+async def api_get_agent_session(vectorstore_name: str, session_id: str = Path(..., description="The agent session ID")):
     """Get agent session information and conversation history.
 
     Args:
+        vectorstore_name: Name of the vectorstore the session uses
         session_id: The agent session ID
 
     Returns:
         JSON with session details and message history
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
             raise HTTPException(status_code=404, detail='Agent session not found')
 
         session = app.chat_sessions[session_id]
+
+        # Verify the vectorstore matches the session's vectorstore
+        session_vectorstore = session.get('vectorstore_name')
+        if session_vectorstore != vectorstore_name:
+            raise HTTPException(status_code=400, detail=f'Session was created with vectorstore "{session_vectorstore}" but request uses "{vectorstore_name}"')
 
         response_data = {
             'success': True,
@@ -2040,19 +2076,29 @@ async def api_get_agent_session(session_id: str = Path(..., description="The age
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete('/api/agent/session/{session_id}')
-async def api_delete_agent_session(session_id: str = Path(..., description="The agent session ID")):
+@app.delete('/api/agent/{vectorstore_name}/session/{session_id}')
+async def api_delete_agent_session(vectorstore_name: str, session_id: str = Path(..., description="The agent session ID")):
     """Delete an agent session.
 
     Args:
+        vectorstore_name: Name of the vectorstore the session uses
         session_id: The agent session ID
 
     Returns:
         JSON confirmation of deletion
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         if not hasattr(app, 'chat_sessions') or session_id not in app.chat_sessions:
             raise HTTPException(status_code=404, detail='Agent session not found')
+
+        session = app.chat_sessions[session_id]
+
+        # Verify the vectorstore matches the session's vectorstore
+        session_vectorstore = session.get('vectorstore_name')
+        if session_vectorstore != vectorstore_name:
+            raise HTTPException(status_code=400, detail=f'Session was created with vectorstore "{session_vectorstore}" but request uses "{vectorstore_name}"')
 
         del app.chat_sessions[session_id]
 
@@ -2068,29 +2114,38 @@ async def api_delete_agent_session(session_id: str = Path(..., description="The 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get('/api/agent/sessions')
-async def api_list_agent_sessions():
-    """List all active agent sessions.
+@app.get('/api/agent/{vectorstore_name}/sessions')
+async def api_list_agent_sessions(vectorstore_name: str):
+    """List all active agent sessions for a specific vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to filter sessions by
 
     Returns:
-        JSON with list of active sessions
+        JSON with list of active sessions for the vectorstore
     """
     try:
+        validate_vectorstore_name(vectorstore_name)
+
         if not hasattr(app, 'chat_sessions'):
             app.chat_sessions = {}
 
         sessions = []
         for session_id, session in app.chat_sessions.items():
-            sessions.append({
-                'session_id': session_id,
-                'created_at': session['created_at'],
-                'last_activity': session['last_activity'],
-                'message_count': len(session['messages']),
-                'system_prompt_preview': session['system_prompt'][:100] + '...' if len(session['system_prompt']) > 100 else session['system_prompt']
-            })
+            # Only include sessions that match the requested vectorstore
+            if session.get('vectorstore_name') == vectorstore_name:
+                sessions.append({
+                    'session_id': session_id,
+                    'created_at': session['created_at'],
+                    'last_activity': session['last_activity'],
+                    'message_count': len(session['messages']),
+                    'vectorstore_name': session['vectorstore_name'],
+                    'system_prompt_preview': session['system_prompt'][:100] + '...' if len(session['system_prompt']) > 100 else session['system_prompt']
+                })
 
         return {
             'success': True,
+            'vectorstore_name': vectorstore_name,
             'sessions': sessions,
             'total_sessions': len(sessions)
         }

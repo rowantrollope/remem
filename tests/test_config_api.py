@@ -70,7 +70,7 @@ def main():
     test_config = {
         "redis": {
             "host": "localhost",
-            "port": 6381,
+            "port":6379,
             "db": 0
         },
         "openai": {
@@ -146,7 +146,7 @@ def main():
     redis_test_config = {
         "redis": {
             "host": "localhost",
-            "port": 6381,
+            "port":     ,
             "db": 1  # Different database
         }
     }
