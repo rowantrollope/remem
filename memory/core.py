@@ -23,9 +23,10 @@ import openai
 # Load environment variables
 load_dotenv()
 
-# Import LLM manager
+# Import LLM manager and LangCache
 sys.path.append('..')
 from llm_manager import get_llm_manager
+from langcache_client import LangCacheClient, CachedLLMClient
 
 
 class RelevanceConfig:
@@ -112,6 +113,17 @@ class MemoryCore:
 
         # Initialize OpenAI client
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Initialize LangCache if environment variables are available
+        self.langcache_client = None
+        try:
+            if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+                self.langcache_client = LangCacheClient()
+                print("✅ LangCache enabled for memory core")
+            else:
+                print("ℹ️ LangCache not configured for memory core (missing environment variables)")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize LangCache for memory core: {e}")
 
         # Initialize Redis connection
         try:
@@ -389,26 +401,29 @@ Respond with a JSON object listing the detected references:
 If no context-dependent references are found, return empty arrays for all categories."""
 
         try:
-            # Use Tier 2 LLM for context analysis
+            # Use Tier 1 LLM for context analysis
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
-            # Create cache context for more specific cache keys
-            analysis_context = {
-                'text_length': len(memory_text),
-                'text_hash': hash(memory_text) % 10000  # Add text variation to cache key
-            }
-
-            response = tier1_client.chat_completion(
-                messages=[
-                    {"role": "user", "content": analysis_prompt}
-                ],
-                operation_type='context_analysis',
-                cache_context={'text_length': len(memory_text)},
-                bypass_cache=True,  # Context analysis is highly dependent on specific content
-                temperature=0.1,
-                max_tokens=300
-            )
+            # Wrap with LangCache if available
+            if self.langcache_client:
+                cached_client = CachedLLMClient(tier1_client, self.langcache_client)
+                response = cached_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": analysis_prompt}
+                    ],
+                    operation_type='context_analysis',
+                    temperature=0.1,
+                    max_tokens=300
+                )
+            else:
+                response = tier1_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": analysis_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=300
+                )
 
             analysis_result = response['content'].strip()
 
@@ -503,25 +518,25 @@ Respond with a JSON object:
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
-            # Create context for more specific cache keys
-            grounding_context = {
-                'dependencies_count': total_dependencies,
-                'temporal_deps': len(dependencies.get('temporal', [])),
-                'spatial_deps': len(dependencies.get('spatial', [])),
-                'current_time': context['temporal']['date'],
-                'location': context['spatial']['location']
-            }
-
-            response = tier1_client.chat_completion(
-                messages=[
-                    {"role": "user", "content": grounding_prompt}
-                ],
-                operation_type='memory_grounding',
-                cache_context={'dependencies_count': total_dependencies, 'current_date': context['temporal']['date']},
-                bypass_cache=True,  # Memory grounding is highly context-dependent and accuracy-critical
-                temperature=0.2,
-                max_tokens=500
-            )
+            # Wrap with LangCache if available
+            if self.langcache_client:
+                cached_client = CachedLLMClient(tier1_client, self.langcache_client)
+                response = cached_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": grounding_prompt}
+                    ],
+                    operation_type='memory_grounding',
+                    temperature=0.2,
+                    max_tokens=500
+                )
+            else:
+                response = tier1_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": grounding_prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=500
+                )
 
             grounding_result = response['content'].strip()
 

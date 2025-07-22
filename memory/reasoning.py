@@ -153,7 +153,6 @@ Please evaluate each memory for relevance to the current question. Use ONLY the 
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                bypass_cache=True,  # Answer generation is highly context-dependent and accuracy-critical
                 temperature=0.3,  # Lower temperature for more consistent answers
                 max_tokens=500
             )

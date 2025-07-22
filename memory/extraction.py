@@ -16,9 +16,10 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Import LLM manager
+# Import LLM manager and LangCache
 sys.path.append('..')
 from llm_manager import get_llm_manager
+from langcache_client import LangCacheClient, CachedLLMClient
 
 
 class MemoryExtraction:
@@ -26,12 +27,23 @@ class MemoryExtraction:
     
     def __init__(self, memory_core):
         """Initialize the memory extraction service.
-        
+
         Args:
             memory_core: Instance of MemoryCore for storing extracted memories
         """
         self.memory_core = memory_core
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Initialize LangCache if environment variables are available
+        self.langcache_client = None
+        try:
+            if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+                self.langcache_client = LangCacheClient()
+                print("✅ LangCache enabled for memory extraction")
+            else:
+                print("ℹ️ LangCache not configured for memory extraction (missing environment variables)")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize LangCache for memory extraction: {e}")
 
     def extract_and_store_memories(self,
                                  raw_input: str,
@@ -460,19 +472,19 @@ Be selective and focus only on information that would improve future assistance.
             llm_manager = get_llm_manager()
             tier1_client = llm_manager.get_tier1_client()
 
-            # Check if client supports caching parameters (optimized client)
-            if hasattr(tier1_client, 'operation_type'):
-                response = tier1_client.chat_completion(
+            # Wrap with LangCache if available
+            if self.langcache_client:
+                cached_client = CachedLLMClient(tier1_client, self.langcache_client)
+                response = cached_client.chat_completion(
                     messages=[
                         {"role": "user", "content": extraction_prompt}
                     ],
                     operation_type='memory_extraction',
-                    bypass_cache=True,  # Memory extraction is highly context-dependent and accuracy-critical
                     temperature=0.2,  # Low temperature for consistent extraction
                     max_tokens=1500   # Allow for detailed extraction
                 )
             else:
-                # Basic client without caching support
+                # Use Tier 1 LLM for memory extraction without caching
                 response = tier1_client.chat_completion(
                     messages=[
                         {"role": "user", "content": extraction_prompt}

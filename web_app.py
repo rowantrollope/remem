@@ -7,7 +7,8 @@ REST API for Memory Agent
 import os
 import json
 import uuid
-import requests
+import urllib.request
+import urllib.error
 import redis
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
 from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager, get_llm_manager
-from optimizations.performance_optimizer import init_performance_optimizer, get_performance_optimizer, optimize_memory_agent
+
 
 app = FastAPI(
     title="Memory Agent API",
@@ -67,11 +68,11 @@ app_config = {
             "timeout": 30
         },
         "tier2": {
-            "provider": "ollama",  # "openai" or "ollama"
-            "model": "deepseek-r1:7b",
+            "provider": "openai",  # "openai" or "ollama"
+            "model": "gpt-3.5-turbo",
             "temperature": 0.1,
             "max_tokens": 1000,
-            "base_url": "http://localhost:11434",  # For Ollama: "http://localhost:11434"
+            "base_url": None,  # For Ollama: "http://localhost:11434"
             "api_key": os.getenv("OPENAI_API_KEY", ""),
             "timeout": 30
         }
@@ -100,34 +101,17 @@ app_config = {
         "debug": True,
         "cors_enabled": True
     },
-    "performance": {
-        "cache_enabled": True,
-        "use_semantic_cache": True,
-        "cache_default_ttl": 3600,
-        "optimization_enabled": True,
-        "batch_processing_enabled": True,
-        "semantic_similarity_threshold": 0.85,
-        "cache_ttl_settings": {
-            "query_optimization": 7200,
-            "memory_relevance": 1800,
-            "context_analysis": 3600,
-            "memory_grounding": 1800,
-            "extraction_evaluation": 900,
-            "memory_extraction_evaluation": 300,  # Short TTL for memory evaluation
-            "conversation": 300,
-            "answer_generation": 1800
-        },
-        "semantic_similarity_thresholds": {
-            "query_optimization": 0.90,
-            "memory_relevance": 0.85,
-            "context_analysis": 0.88,
-            "memory_grounding": 0.82,
-            "extraction_evaluation": 0.80,
-            "memory_extraction_evaluation": 0.70,  # Lower threshold for memory evaluation to reduce false cache hits
-            "conversation": 0.95,
-            "answer_generation": 0.87
+    "langcache": {
+        "enabled": True,  # Master switch for all caching
+        "cache_types": {
+            "memory_extraction": True,      # Cache memory extraction from conversations
+            "query_optimization": True,     # Cache query validation and preprocessing
+            "embedding_optimization": True, # Cache query optimization for vector search
+            "context_analysis": True,       # Cache memory context analysis
+            "memory_grounding": True        # Cache memory grounding operations
         }
-    }
+    },
+
 }
 
 # =============================================================================
@@ -190,9 +174,7 @@ class LLMConfigUpdate(BaseModel):
     tier1: Optional[LLMConfigTier] = None
     tier2: Optional[LLMConfigTier] = None
 
-class CacheClearRequest(BaseModel):
-    pattern: Optional[str] = Field(None, description="Cache pattern to clear")
-    operation_type: Optional[str] = Field(None, description="Operation type to clear")
+
 
 class ConfigUpdateRequest(BaseModel):
     redis: Optional[Dict[str, Any]] = Field(None, description="Redis configuration")
@@ -201,7 +183,8 @@ class ConfigUpdateRequest(BaseModel):
     langgraph: Optional[Dict[str, Any]] = Field(None, description="LangGraph configuration")
     memory_agent: Optional[Dict[str, Any]] = Field(None, description="Memory agent configuration")
     web_server: Optional[Dict[str, Any]] = Field(None, description="Web server configuration")
-    performance: Optional[Dict[str, Any]] = Field(None, description="Performance configuration")
+    langcache: Optional[Dict[str, Any]] = Field(None, description="LangCache configuration")
+
 
 # =============================================================================
 # ASYNC MEMORY PROCESSING MODELS
@@ -273,35 +256,14 @@ def init_llm_manager():
         print(f"Failed to initialize LLM manager: {e}")
         return False
 
-def reinitialize_llm_manager_with_optimizations():
-    """Reinitialize LLM manager and reapply performance optimizations if enabled."""
+def reinitialize_llm_manager():
+    """Reinitialize LLM manager."""
     try:
         # Reinitialize the LLM manager
         if not init_llm_manager():
             return False, "Failed to reinitialize LLM manager"
 
-        # Reapply performance optimizations if enabled
-        if app_config["performance"]["optimization_enabled"] and app_config["performance"]["cache_enabled"]:
-            try:
-                optimizer = get_performance_optimizer()
-                if optimizer:
-                    llm_manager = get_llm_manager()
-                    cached_llm_manager = optimizer.optimize_llm_manager(llm_manager)
-                    
-                    # Replace the global LLM manager with the cached version
-                    import llm_manager as llm_manager_module
-                    llm_manager_module.llm_manager = cached_llm_manager
-                    
-                    cache_type = "semantic vectorset" if app_config["performance"]["use_semantic_cache"] else "hash-based"
-                    print(f"✅ LLM manager reinitialized and wrapped with {cache_type} caching")
-                else:
-                    print("✅ LLM manager reinitialized (no performance optimizer available)")
-            except Exception as e:
-                print(f"⚠️ LLM manager reinitialized but performance optimization failed: {e}")
-                # Don't fail completely, the LLM manager is still functional
-        else:
-            print("✅ LLM manager reinitialized (performance optimizations disabled)")
-
+        print("✅ LLM manager reinitialized successfully")
         return True, "LLM manager reinitialized successfully"
     except Exception as e:
         error_msg = f"Failed to reinitialize LLM manager: {e}"
@@ -311,30 +273,13 @@ def reinitialize_llm_manager_with_optimizations():
 def init_memory_agent():
     """Initialize the LangGraph memory agent with current configuration."""
     global memory_agent
+
+    # Check if already initialized to prevent double initialization
+    if memory_agent is not None:
+        print("ℹ️ Memory agent already initialized, skipping re-initialization")
+        return True
+
     try:
-        # Initialize performance optimizer if enabled
-        optimizer = None
-        if app_config["performance"]["optimization_enabled"]:
-            optimizer = init_performance_optimizer(
-                redis_host=app_config["redis"]["host"],
-                redis_port=app_config["redis"]["port"],
-                redis_db=app_config["redis"]["db"],
-                cache_enabled=app_config["performance"]["cache_enabled"],
-                use_semantic_cache=app_config["performance"]["use_semantic_cache"]
-            )
-            cache_type = "semantic vectorset" if app_config["performance"]["use_semantic_cache"] else "hash-based"
-            print(f"✅ Performance optimizer initialized ({cache_type} caching)")
-
-            # CRITICAL: Wrap the LLM manager with caching
-            if app_config["performance"]["cache_enabled"]:
-                llm_manager = get_llm_manager()
-                cached_llm_manager = optimizer.optimize_llm_manager(llm_manager)
-                
-                # Replace the global LLM manager with the cached version
-                import llm_manager as llm_manager_module
-                llm_manager_module.llm_manager = cached_llm_manager
-                print(f"✅ LLM manager wrapped with {cache_type} caching")
-
         # Create memory agent with current Redis configuration
         base_memory_agent = MemoryAgent(
             redis_host=app_config["redis"]["host"],
@@ -343,13 +288,7 @@ def init_memory_agent():
             vectorset_key=app_config["redis"]["vectorset_key"]
         )
 
-        # Apply performance optimizations if enabled
-        if app_config["performance"]["optimization_enabled"]:
-            base_memory_agent = optimize_memory_agent(
-                base_memory_agent,
-                cache_enabled=app_config["performance"]["cache_enabled"]
-            )
-            print("✅ Memory agent optimizations applied")
+
 
         # Create LangGraph agent with current OpenAI configuration
         memory_agent = LangGraphMemoryAgent(
@@ -1787,166 +1726,151 @@ def _handle_memory_enabled_message(session_id, session, user_message, stream, st
     if not memory_agent:
         raise HTTPException(status_code=500, detail='Memory agent not initialized but session requires memory')
     
-    # Temporarily disable caching for agent sessions to ensure fresh memory retrieval
-    # Store original processing module and replace with non-cached version during session
-    original_processing = None
-    if hasattr(memory_agent.memory_agent, 'processing'):
-        original_processing = memory_agent.memory_agent.processing
-        # Import the non-optimized version
-        from memory.processing import MemoryProcessing
-        memory_agent.memory_agent.processing = MemoryProcessing()
-        print("🚫 Temporarily disabled memory processing cache for agent session")
-    
+
+    # Create user message object
+    user_message_obj = {
+        'role': 'user',
+        'content': user_message,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
+
+    # Add user message to session messages for conversation history
+    session['messages'].append(user_message_obj)
+
+    # Add to conversation buffer for memory extraction
+    if 'conversation_buffer' not in session:
+        session['conversation_buffer'] = []
+
+    session['conversation_buffer'].append(user_message_obj)
+
+    # Retrieve relevant memories for context using advanced filtering with embedding optimization
+    relevant_memories = []
     try:
-        # Create user message object
-        user_message_obj = {
-            'role': 'user',
-            'content': user_message,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-        
-        # Add user message to session messages for conversation history
-        session['messages'].append(user_message_obj)
+        print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}' (top_k: {top_k})")
 
-        # Add to conversation buffer for memory extraction
-        if 'conversation_buffer' not in session:
-            session['conversation_buffer'] = []
+        # Use embedding optimization for better vector similarity search
+        validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(user_message)
 
-        session['conversation_buffer'].append(user_message_obj)
+        if validation_result["type"] == "search":
+            # Use the embedding-optimized query for vector search
+            search_query = validation_result.get("embedding_query") or validation_result["content"]
+            print(f"2b) Using optimized search query: '{search_query}'")
 
-        # Retrieve relevant memories for context using advanced filtering with embedding optimization
-        relevant_memories = []
-        try:
-            print(f"2) Searching memories for: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}' (top_k: {top_k})")
-
-            # Use embedding optimization for better vector similarity search
-            validation_result = memory_agent.memory_agent.processing.validate_and_preprocess_question(user_message)
-
-            if validation_result["type"] == "search":
-                # Use the embedding-optimized query for vector search
-                search_query = validation_result.get("embedding_query") or validation_result["content"]
-                print(f"2b) Using optimized search query: '{search_query}'")
-
-                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    query=search_query,
-                    top_k=top_k,
-                    min_similarity=min_similarity,
-                    vectorset_key=vectorstore_name
-                )
-                memory_results = search_result['memories']
-                filtering_info = search_result['filtering_info']
-            else:
-                # For help queries, still search but with original message
-                search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
-                    query=user_message,
-                    top_k=top_k,
-                    min_similarity=min_similarity,
-                    vectorset_key=vectorstore_name
-                )
-                memory_results = search_result['memories']
-                filtering_info = search_result['filtering_info']
-
-            if memory_results:
-                print(f"3) Found {len(memory_results)} memories, sending directly to LLM (no pre-filtering)")
-                relevant_memories = memory_results
-            else:
-                print(f"3) No relevant memories found")
-                relevant_memories = []
-        except Exception as e:
-            print(f"⚠️ Memory search failed: {e}")
-
-        # Prepare enhanced system prompt with memory context
-        enhanced_system_prompt = session['system_prompt']
-        if relevant_memories:
-            memory_context = "\n\n==== MEMORY CONTEXT ====\n"
-            memory_context += "Here are potentially relevant memories from previous interactions:\n\n"
-            for i, memory in enumerate(relevant_memories, 1):
-                # Include similarity score and timestamp for context
-                score_percent = memory.get('score', 0) * 100
-                timestamp = memory.get('formatted_time', 'Unknown time')
-                memory_context += f"Memory {i} (Similarity: {score_percent:.1f}%, {timestamp}):\n{memory['text']}\n\n"
-
-            memory_context += "INSTRUCTIONS FOR USING MEMORIES:\n"
-            memory_context += "- Only use memories that are directly relevant to the current request\n"
-            memory_context += "- Ignore memories that don't relate to the user's current question or need\n"
-            memory_context += "- Use relevant memories to provide personalized, contextual responses\n"
-            memory_context += "- Consider the user's preferences, constraints, and past experiences when applicable\n"
-            memory_context += "- If no memories are relevant, respond based on the current conversation only\n"
-            memory_context += "==== END MEMORY CONTEXT ====\n"
-            enhanced_system_prompt += memory_context
-
-        # Prepare messages for LLM
-        llm_messages = [
-            {'role': 'system', 'content': enhanced_system_prompt}
-        ]
-
-        # Add recent conversation history (limit to last 10 messages to avoid token limits)
-        recent_messages = session['messages'][-10:]
-        for msg in recent_messages:
-            llm_messages.append({
-                'role': msg['role'],
-                'content': msg['content']
-            })
-
-        # Get response from Tier 1 LLM (primary conversational)
-        try:
-            llm_manager = get_llm_manager()
-            tier1_client = llm_manager.get_tier1_client()
-            print(f"4) Sending message to Tier 1 LLM: {llm_messages}")
-            response = tier1_client.chat_completion(
-                messages=llm_messages,
-                temperature=session['config'].get('temperature', 0.7),
-                max_tokens=session['config'].get('max_tokens', 1000),
-                bypass_cache=True  # Disable cache for agent sessions to ensure fresh memory retrieval
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query=search_query,
+                top_k=top_k,
+                min_similarity=min_similarity,
+                vectorset_key=vectorstore_name
             )
-
-            if stream:
-                # TODO: Implement streaming response
-                raise HTTPException(status_code=501, detail='Streaming not yet implemented')
-
-            assistant_response = response['content']
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
-
-        # Add assistant response to session and buffer
-        assistant_message = {
-            'role': 'assistant',
-            'content': assistant_response,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-        session['messages'].append(assistant_message)
-        session['conversation_buffer'].append(assistant_message)
-        session['last_activity'] = datetime.now(timezone.utc).isoformat()
-
-        # Check if we should extract memories (only if store_memory is True)
-        if store_memory:
-            _check_and_extract_memories(session_id, session, vectorstore_name)
+            memory_results = search_result['memories']
+            filtering_info = search_result['filtering_info']
         else:
-            print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
+        # For help queries, still search but with original message
+            search_result = memory_agent.memory_agent.search_memories_with_filtering_info(
+                query=user_message,
+                top_k=top_k,
+                min_similarity=min_similarity,
+                vectorset_key=vectorstore_name
+            )
+            memory_results = search_result['memories']
+            filtering_info = search_result['filtering_info']
 
-        response_data = {
-            'success': True,
-            'session_id': session_id,
-            'message': assistant_response,
-            'conversation_length': len(session['messages']),
-            'timestamp': assistant_message['timestamp']
+        if memory_results:
+            print(f"3) Found {len(memory_results)} memories, sending directly to LLM (no pre-filtering)")
+            relevant_memories = memory_results
+        else:
+            print(f"3) No relevant memories found")
+            relevant_memories = []
+    except Exception as e:
+        print(f"⚠️ Memory search failed: {e}")
+
+    # Prepare enhanced system prompt with memory context
+    enhanced_system_prompt = session['system_prompt']
+    if relevant_memories:
+        memory_context = "\n\n==== MEMORY CONTEXT ====\n"
+        memory_context += "Here are potentially relevant memories from previous interactions:\n\n"
+        for i, memory in enumerate(relevant_memories, 1):
+            # Include similarity score and timestamp for context
+            score_percent = memory.get('score', 0) * 100
+            timestamp = memory.get('formatted_time', 'Unknown time')
+            memory_context += f"Memory {i} (Similarity: {score_percent:.1f}%, {timestamp}):\n{memory['text']}\n\n"
+
+        memory_context += "INSTRUCTIONS FOR USING MEMORIES:\n"
+        memory_context += "- Only use memories that are directly relevant to the current request\n"
+        memory_context += "- Ignore memories that don't relate to the user's current question or need\n"
+        memory_context += "- Use relevant memories to provide personalized, contextual responses\n"
+        memory_context += "- Consider the user's preferences, constraints, and past experiences when applicable\n"
+        memory_context += "- If no memories are relevant, respond based on the current conversation only\n"
+        memory_context += "==== END MEMORY CONTEXT ====\n"
+        enhanced_system_prompt += memory_context
+
+    # Prepare messages for LLM
+    llm_messages = [
+        {'role': 'system', 'content': enhanced_system_prompt}
+    ]
+
+    # Add recent conversation history (limit to last 10 messages to avoid token limits)
+    recent_messages = session['messages'][-10:]
+    for msg in recent_messages:
+        llm_messages.append({
+            'role': msg['role'],
+            'content': msg['content']
+        })
+
+    # Get response from Tier 1 LLM (primary conversational)
+    try:
+        llm_manager = get_llm_manager()
+        tier1_client = llm_manager.get_tier1_client()
+        print(f"4) Sending message to Tier 1 LLM: {llm_messages}")
+        response = tier1_client.chat_completion(
+            messages=llm_messages,
+            temperature=session['config'].get('temperature', 0.7),
+            max_tokens=session['config'].get('max_tokens', 1000)
+        )
+
+        if stream:
+            # TODO: Implement streaming response
+            raise HTTPException(status_code=501, detail='Streaming not yet implemented')
+
+        assistant_response = response['content']
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'LLM error: {str(e)}')
+
+    # Add assistant response to session and buffer
+    assistant_message = {
+        'role': 'assistant',
+        'content': assistant_response,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
+    session['messages'].append(assistant_message)
+    session['conversation_buffer'].append(assistant_message)
+    session['last_activity'] = datetime.now(timezone.utc).isoformat()
+
+    # Check if we should extract memories (only if store_memory is True)
+    if store_memory:
+        _check_and_extract_memories(session_id, session, vectorstore_name)
+    else:
+        print(f"🧠 [{session_id}] MEMORY: Skipping memory extraction (store_memory=False)")
+
+    response_data = {
+        'success': True,
+        'session_id': session_id,
+        'message': assistant_response,
+        'conversation_length': len(session['messages']),
+        'timestamp': assistant_message['timestamp']
+    }
+
+    # Add memory info if memories were used
+    if relevant_memories:
+        response_data['memory_context'] = {
+            'memories_used': len(relevant_memories),
+            'memories': relevant_memories,  # Include all memory details for rendering
+            'filtering_info': filtering_info if 'filtering_info' in locals() else None
         }
-
-        # Add memory info if memories were used
-        if relevant_memories:
-            response_data['memory_context'] = {
-                'memories_used': len(relevant_memories),
-                'memories': relevant_memories,  # Include all memory details for rendering
-                'filtering_info': filtering_info if 'filtering_info' in locals() else None
-            }
-        print(f"7) memories_used: {len(relevant_memories)}")
-        return response_data
+    print(f"7) memories_used: {len(relevant_memories)}")
+    return response_data
     
-    finally:
-        # Restore original processing module if it was replaced
-        if original_processing is not None:
-            memory_agent.memory_agent.processing = original_processing
-            print("✅ Restored original memory processing module")
+
 
 
 def _check_and_extract_memories(session_id, session, vectorstore_name="memories"):
@@ -2170,12 +2094,7 @@ async def api_health():
 # LLM APIs - LLM provider management and model information
 # =============================================================================
 
-# Simple in-memory cache for Ollama models
-ollama_models_cache = {
-    'data': None,
-    'timestamp': None,
-    'ttl': 45  # Cache for 45 seconds
-}
+
 
 @app.get('/api/llm/config')
 async def api_get_llm_config():
@@ -2293,7 +2212,7 @@ async def api_update_llm_config(request: LLMConfigUpdate):
         
         if changes_made:
             print(f"🔄 LLM configuration changed, reinitializing LLM manager...")
-            success, message = reinitialize_llm_manager_with_optimizations()
+            success, message = reinitialize_llm_manager()
             llm_reinitialized = success
             if not success:
                 llm_reinit_error = message
@@ -2343,64 +2262,58 @@ async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', 
     """
     try:
         base_url = base_url.rstrip('/')
-        cache_key = base_url  # Use base_url as cache key for different instances
-        
-        # Check cache first
-        current_time = datetime.now(timezone.utc)
-        cache_data = ollama_models_cache.get('data')
-        cache_timestamp = ollama_models_cache.get('timestamp')
-        cache_base_url = ollama_models_cache.get('base_url')
-        
-        if (cache_data and cache_timestamp and cache_base_url == base_url and
-            (current_time - cache_timestamp).total_seconds() < ollama_models_cache['ttl']):
-            print(f"🎯 LLM API: Serving Ollama models from cache (age: {(current_time - cache_timestamp).total_seconds():.1f}s)")
-            return {
-                'success': True,
-                'models': cache_data,
-                'count': len(cache_data),
-                'base_url': base_url,
-                'cached': True,
-                'cache_age_seconds': (current_time - cache_timestamp).total_seconds()
-            }
-
         print(f"🦙 LLM API: Fetching available models from Ollama at {base_url}")
         
         # Make request to Ollama /api/tags endpoint
         ollama_url = f"{base_url}/api/tags"
         
         try:
-            response = requests.get(ollama_url, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.ConnectionError:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    'success': False,
-                    'error': f'Unable to connect to Ollama server at {base_url}',
-                    'message': 'Please ensure Ollama is running and accessible',
-                    'base_url': base_url
-                }
-            )
-        except requests.exceptions.Timeout:
-            raise HTTPException(
-                status_code=504,
-                detail={
-                    'success': False,
-                    'error': f'Timeout connecting to Ollama server at {base_url}',
-                    'message': 'Ollama server did not respond within 10 seconds',
-                    'base_url': base_url
-                }
-            )
-        except requests.exceptions.HTTPError as e:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    'success': False,
-                    'error': f'HTTP error from Ollama server: {e.response.status_code}',
-                    'message': f'Ollama server returned an error: {e.response.text}',
-                    'base_url': base_url
-                }
-            )
+            request = urllib.request.Request(ollama_url)
+            with urllib.request.urlopen(request, timeout=10) as response:
+                response_data = response.read()
+        except urllib.error.URLError as e:
+            if hasattr(e, 'reason'):
+                # Connection error
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        'success': False,
+                        'error': f'Unable to connect to Ollama server at {base_url}',
+                        'message': 'Please ensure Ollama is running and accessible',
+                        'base_url': base_url
+                    }
+                )
+            elif hasattr(e, 'code'):
+                # HTTP error
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        'success': False,
+                        'error': f'HTTP error from Ollama server: {e.code}',
+                        'message': f'Ollama server returned an error: {e.reason}',
+                        'base_url': base_url
+                    }
+                )
+        except Exception as e:
+            if 'timeout' in str(e).lower():
+                raise HTTPException(
+                    status_code=504,
+                    detail={
+                        'success': False,
+                        'error': f'Timeout connecting to Ollama server at {base_url}',
+                        'message': 'Ollama server did not respond within 10 seconds',
+                        'base_url': base_url
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        'success': False,
+                        'error': f'Unexpected error connecting to Ollama: {str(e)}',
+                        'base_url': base_url
+                    }
+                )
         except Exception as e:
             raise HTTPException(
                 status_code=500,
@@ -2413,7 +2326,7 @@ async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', 
 
         # Parse Ollama response
         try:
-            ollama_data = response.json()
+            ollama_data = json.loads(response_data.decode('utf-8'))
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=502,
@@ -2450,22 +2363,13 @@ async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', 
             
             models.append(transformed_model)
 
-        # Update cache
-        ollama_models_cache.update({
-            'data': models,
-            'timestamp': current_time,
-            'base_url': base_url
-        })
-
-        print(f"🦙 LLM API: Found {len(models)} models, cached for {ollama_models_cache['ttl']} seconds")
+        print(f"🦙 LLM API: Found {len(models)} models")
 
         return {
             'success': True,
             'models': models,
             'count': len(models),
-            'base_url': base_url,
-            'cached': False,
-            'cache_ttl_seconds': ollama_models_cache['ttl']
+            'base_url': base_url
         }
 
     except HTTPException:
@@ -2480,143 +2384,7 @@ async def api_get_ollama_models(base_url: str = Query('http://localhost:11434', 
             }
         )
 
-# =============================================================================
-# PERFORMANCE APIs - Performance monitoring and optimization
-# =============================================================================
 
-@app.get('/api/performance/metrics')
-async def api_get_performance_metrics():
-    """Get current performance metrics and cache statistics.
-
-    Returns:
-        JSON with performance metrics, cache statistics, and optimization status
-    """
-    try:
-        optimizer = get_performance_optimizer()
-
-        if not optimizer:
-            raise HTTPException(
-                status_code=500,
-                detail='Performance optimizer not initialized'
-            )
-
-        metrics = optimizer.get_performance_metrics()
-
-        return {
-            'success': True,
-            'performance_metrics': metrics,
-            'configuration': {
-                'optimization_enabled': app_config["performance"]["optimization_enabled"],
-                'cache_enabled': app_config["performance"]["cache_enabled"],
-                'batch_processing_enabled': app_config["performance"]["batch_processing_enabled"],
-                'cache_default_ttl': app_config["performance"]["cache_default_ttl"]
-            },
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post('/api/performance/cache/clear')
-async def api_clear_performance_cache(request: Optional[CacheClearRequest] = None):
-    """Clear performance cache entries.
-
-    Args:
-        request: Optional request body with pattern and operation_type
-            - pattern (str): Cache pattern to clear (for hash-based cache)
-            - operation_type (str): Operation type to clear (for semantic cache)
-                                   Options: query_optimization, memory_relevance, context_analysis,
-                                           memory_grounding, extraction_evaluation, conversation, answer_generation
-            If neither provided, clears all cache entries
-
-    Returns:
-        JSON with clearing results
-    """
-    try:
-        optimizer = get_performance_optimizer()
-
-        if not optimizer:
-            raise HTTPException(
-                status_code=500,
-                detail='Performance optimizer not initialized'
-            )
-
-        pattern = request.pattern if request else None
-        operation_type = request.operation_type if request else None
-
-        result = optimizer.clear_cache(pattern=pattern, operation_type=operation_type)
-
-        return {
-            'success': True,
-            **result,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get('/api/performance/cache/analyze')
-async def api_analyze_cache_effectiveness():
-    """Analyze cache effectiveness and provide optimization recommendations.
-
-    Returns:
-        JSON with cache analysis and recommendations
-    """
-    try:
-        optimizer = get_performance_optimizer()
-
-        if not optimizer:
-            raise HTTPException(
-                status_code=500,
-                detail='Performance optimizer not initialized'
-            )
-
-        analysis = optimizer.analyze_cache_effectiveness()
-
-        return {
-            'success': True,
-            'cache_analysis': analysis,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete('/api/performance/cache/memory-evaluation')
-async def api_clear_memory_evaluation_cache():
-    """Clear semantic cache entries for memory evaluation to resolve false cache hits.
-
-    Returns:
-        JSON with clearing results
-    """
-    try:
-        optimizer = get_performance_optimizer()
-
-        if not optimizer:
-            raise HTTPException(
-                status_code=500,
-                detail='Performance optimizer not initialized'
-            )
-
-        result = optimizer.clear_cache(operation_type='memory_extraction_evaluation')
-
-        return {
-            'success': True,
-            'message': 'Memory evaluation cache cleared',
-            **result,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # =============================================================================
 # CONFIGURATION MANAGEMENT APIs - Runtime configuration management
@@ -2907,57 +2675,31 @@ async def api_update_config(request: ConfigUpdateRequest):
                         changes_made.append(f"web_server.{key}: {old_value} → {new_value}")
                         warnings.append(f"Web server {key} change requires application restart to take effect")
 
-        # Update Performance configuration
-        if 'performance' in data:
-            perf_config = data['performance']
+        # Update LangCache configuration
+        if 'langcache' in data:
+            langcache_config = data['langcache']
 
-            for key in ['cache_enabled', 'optimization_enabled', 'batch_processing_enabled', 'use_semantic_cache']:
-                if key in perf_config:
-                    old_value = app_config['performance'].get(key)
-                    new_value = bool(perf_config[key])
+            # Update master enabled flag
+            if 'enabled' in langcache_config:
+                old_value = app_config['langcache'].get('enabled')
+                new_value = bool(langcache_config['enabled'])
 
-                    if old_value != new_value:
-                        app_config['performance'][key] = new_value
-                        changes_made.append(f"performance.{key}: {old_value} → {new_value}")
-                        if key in ['optimization_enabled', 'cache_enabled', 'use_semantic_cache']:
-                            requires_restart = True
+                if old_value != new_value:
+                    app_config['langcache']['enabled'] = new_value
+                    changes_made.append(f"langcache.enabled: {old_value} → {new_value}")
 
-            for key in ['cache_default_ttl']:
-                if key in perf_config:
-                    try:
-                        old_value = app_config['performance'].get(key)
-                        new_value = int(perf_config[key])
-
-                        if old_value != new_value:
-                            app_config['performance'][key] = new_value
-                            changes_made.append(f"performance.{key}: {old_value} → {new_value}")
-                    except (ValueError, TypeError):
-                        raise HTTPException(status_code=400, detail=f'Performance {key} must be an integer')
-
-            if 'semantic_similarity_threshold' in perf_config:
-                try:
-                    old_value = app_config['performance'].get('semantic_similarity_threshold')
-                    new_value = float(perf_config['semantic_similarity_threshold'])
-
-                    if old_value != new_value:
-                        app_config['performance']['semantic_similarity_threshold'] = new_value
-                        changes_made.append(f"performance.semantic_similarity_threshold: {old_value} → {new_value}")
-                except (ValueError, TypeError):
-                    raise HTTPException(status_code=400, detail='Performance semantic_similarity_threshold must be a float')
-
-            if 'cache_ttl_settings' in perf_config:
-                ttl_settings = perf_config['cache_ttl_settings']
-                if isinstance(ttl_settings, dict):
-                    for ttl_key, ttl_value in ttl_settings.items():
-                        try:
-                            old_value = app_config['performance']['cache_ttl_settings'].get(ttl_key)
-                            new_value = int(ttl_value)
+            # Update individual cache type settings
+            if 'cache_types' in langcache_config:
+                cache_types = langcache_config['cache_types']
+                if isinstance(cache_types, dict):
+                    for cache_type, enabled in cache_types.items():
+                        if cache_type in app_config['langcache']['cache_types']:
+                            old_value = app_config['langcache']['cache_types'].get(cache_type)
+                            new_value = bool(enabled)
 
                             if old_value != new_value:
-                                app_config['performance']['cache_ttl_settings'][ttl_key] = new_value
-                                changes_made.append(f"performance.cache_ttl_settings.{ttl_key}: {old_value} → {new_value}")
-                        except (ValueError, TypeError):
-                            raise HTTPException(status_code=400, detail=f'Performance cache TTL {ttl_key} must be an integer')
+                                app_config['langcache']['cache_types'][cache_type] = new_value
+                                changes_made.append(f"langcache.cache_types.{cache_type}: {old_value} → {new_value}")
 
         # Check if LLM configuration was changed and reinitialize if needed
         llm_reinitialized = False
@@ -2966,7 +2708,7 @@ async def api_update_config(request: ConfigUpdateRequest):
         
         if llm_config_changed:
             print(f"🔄 LLM configuration changed, reinitializing LLM manager...")
-            success, message = reinitialize_llm_manager_with_optimizations()
+            success, message = reinitialize_llm_manager()
             llm_reinitialized = success
             if not success:
                 llm_reinit_error = message
@@ -3382,6 +3124,40 @@ async def api_test_config(request: ConfigUpdateRequest):
             if not web_test['valid']:
                 test_results['overall_valid'] = False
 
+        # Test LangCache configuration
+        if 'langcache' in data:
+            langcache_config = data['langcache']
+            langcache_test = {
+                'valid': True,
+                'errors': [],
+                'warnings': []
+            }
+
+            # Validate enabled flag
+            if 'enabled' in langcache_config:
+                if not isinstance(langcache_config['enabled'], bool):
+                    langcache_test['errors'].append('enabled must be a boolean')
+                    langcache_test['valid'] = False
+
+            # Validate cache_types
+            if 'cache_types' in langcache_config:
+                cache_types = langcache_config['cache_types']
+                if not isinstance(cache_types, dict):
+                    langcache_test['errors'].append('cache_types must be an object')
+                    langcache_test['valid'] = False
+                else:
+                    valid_cache_types = ['memory_extraction', 'query_optimization', 'embedding_optimization', 'context_analysis', 'memory_grounding']
+                    for cache_type, enabled in cache_types.items():
+                        if cache_type not in valid_cache_types:
+                            langcache_test['warnings'].append(f'Unknown cache type: {cache_type}')
+                        if not isinstance(enabled, bool):
+                            langcache_test['errors'].append(f'cache_types.{cache_type} must be a boolean')
+                            langcache_test['valid'] = False
+
+            test_results['tests']['langcache'] = langcache_test
+            if not langcache_test['valid']:
+                test_results['overall_valid'] = False
+
         return {
             'success': True,
             'test_results': test_results,
@@ -3397,6 +3173,13 @@ async def api_test_config(request: ConfigUpdateRequest):
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
+    global memory_agent
+
+    # Check if already initialized to prevent double initialization
+    if memory_agent is not None:
+        print("ℹ️ Memory agent already initialized, skipping startup initialization")
+        return
+
     print("🚀 Starting Memory Agent Web Server...")
 
     # Check environment

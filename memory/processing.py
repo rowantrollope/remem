@@ -16,9 +16,10 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Import LLM manager
+# Import LLM manager and LangCache
 sys.path.append('..')
 from llm_manager import get_llm_manager
+from langcache_client import LangCacheClient, CachedLLMClient
 
 
 class MemoryProcessing:
@@ -27,6 +28,17 @@ class MemoryProcessing:
     def __init__(self):
         """Initialize the memory processing utilities."""
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Initialize LangCache if environment variables are available
+        self.langcache_client = None
+        try:
+            if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+                self.langcache_client = LangCacheClient()
+                print("✅ LangCache enabled for memory processing")
+            else:
+                print("ℹ️ LangCache not configured for memory processing (missing environment variables)")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize LangCache for memory processing: {e}")
 
     def validate_and_preprocess_question(self, user_input: str) -> Dict[str, Any]:
         """Validate user input and preprocess it for optimal vector search.
@@ -69,14 +81,25 @@ Be inclusive about what qualifies as a memory question - if it could be asking a
             llm_manager = get_llm_manager()
             tier2_client = llm_manager.get_tier2_client()
 
-            response = tier2_client.chat_completion(
-                messages=[
-                    {"role": "user", "content": validation_prompt}
-                ],
-                bypass_cache=True,  # Input validation is context-dependent and needs fresh evaluation
-                temperature=0.1,  # Very low temperature for consistent validation
-                max_tokens=200
-            )
+            # Wrap with LangCache if available
+            if self.langcache_client:
+                cached_client = CachedLLMClient(tier2_client, self.langcache_client)
+                response = cached_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": validation_prompt}
+                    ],
+                    operation_type='query_optimization',
+                    temperature=0.1,  # Very low temperature for consistent validation
+                    max_tokens=200
+                )
+            else:
+                response = tier2_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": validation_prompt}
+                    ],
+                    temperature=0.1,  # Very low temperature for consistent validation
+                    max_tokens=200
+                )
 
             validation_result = response['content'].strip()
 
@@ -157,16 +180,31 @@ EXAMPLES:
 Your response should be ONLY the optimized search query (no explanations, no quotes, just the query):"""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "user", "content": optimization_prompt}
-                ],
-                temperature=0.1,  # Low temperature for consistent optimization
-                max_tokens=50  # Keep it concise
-            )
+            # Use Tier 2 LLM for query optimization
+            llm_manager = get_llm_manager()
+            tier2_client = llm_manager.get_tier2_client()
 
-            optimized_query = response.choices[0].message.content.strip()
+            # Wrap with LangCache if available
+            if self.langcache_client:
+                cached_client = CachedLLMClient(tier2_client, self.langcache_client)
+                response = cached_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": optimization_prompt}
+                    ],
+                    operation_type='embedding_optimization',
+                    temperature=0.1,  # Low temperature for consistent optimization
+                    max_tokens=50  # Keep it concise
+                )
+            else:
+                response = tier2_client.chat_completion(
+                    messages=[
+                        {"role": "user", "content": optimization_prompt}
+                    ],
+                    temperature=0.1,  # Low temperature for consistent optimization
+                    max_tokens=50  # Keep it concise
+                )
+
+            optimized_query = response['content'].strip()
 
             # Remove any quotes that might have been added
             optimized_query = optimized_query.strip('"\'')
