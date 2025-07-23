@@ -3,7 +3,7 @@
 Test script for the Minsky-inspired Memory Agent API
 
 This script tests the three-layer API architecture:
-- NEME API: Fundamental memory operations
+- MEMORY API Fundamental memory operations
 - K-LINE API: Reflective operations and reasoning
 - AGENT API: High-level orchestration
 

@@ -43,7 +43,7 @@ class MemoryAgent:
     - MemoryReasoning: K-line construction and sophisticated reasoning
 
     The agent provides three levels of API:
-    1. NEME API: Direct manipulation of atomic memories
+    1. MEMORY API Direct manipulation of atomic memories
     2. K-LINE API: Mental state construction and reasoning
     3. AGENT API: Full cognitive orchestration
     """

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
 from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager, get_llm_manager
+from langcache_client import LangCacheClient
 
 
 app = FastAPI(
@@ -417,7 +418,7 @@ async def _store_memory_impl(request: MemoryStoreRequest, vectorstore_name: str)
         if not memory_text:
             raise HTTPException(status_code=400, detail='Memory text is required')
 
-        print(f"💾 NEME API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
+        print(f"💾 MEMORY API: Storing atomic memory - '{memory_text[:60]}{'...' if len(memory_text) > 60 else ''}'")
         print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
@@ -477,7 +478,7 @@ async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: 
         if not query:
             raise HTTPException(status_code=400, detail='Query is required')
 
-        print(f"🔍 NEME API: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
+        print(f"🔍 MEMORY API Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
         print(f"📦 Vectorstore: {vectorstore_name}")
         if filter_expr:
             print(f"🔍 Filter: {filter_expr}")
@@ -508,8 +509,8 @@ async def _search_memories_impl(request: MemorySearchRequest, vectorstore_name: 
 
         memories = search_result['memories']
         filtering_info = search_result['filtering_info']
-        print(f"🔍 NEME API: Search result type: {type(search_result)}")
-        print(f"🔍 NEME API: Filtering info: {filtering_info}")
+        print(f"🔍 MEMORY API Search result type: {type(search_result)}")
+        print(f"🔍 MEMORY API Filtering info: {filtering_info}")
 
         return {
             'success': True,
@@ -655,7 +656,7 @@ async def _delete_memory_impl(memory_id: str, vectorstore_name: str):
         if not memory_id or not memory_id.strip():
             raise HTTPException(status_code=400, detail='Memory ID is required')
 
-        print(f"🗑️ NEME API: Deleting atomic memory: {memory_id}")
+        print(f"🗑️ MEMORY API Deleting atomic memory: {memory_id}")
         print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
@@ -695,7 +696,7 @@ async def _delete_all_memories_impl(vectorstore_name: str):
         JSON with success status, deletion count, and operation details
     """
     try:
-        print("🗑️ NEME API: Clearing all atomic memories...")
+        print("🗑️ MEMORY API Clearing all atomic memories...")
         print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Use existing memory agent with vectorstore parameter
@@ -744,7 +745,7 @@ async def _set_context_impl(request: ContextSetRequest, additional_context: Dict
         # Use additional_context for environment context
         environment_context = additional_context
 
-        print(f"🌍 NEME API: Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
+        print(f"🌍 MEMORY API Setting context - Location: {location}, Activity: {activity}, People: {people_present}")
         print(f"📦 Vectorstore: {vectorstore_name}")
 
         # Set context on underlying memory agent
@@ -833,6 +834,113 @@ async def _get_context_impl(vectorstore_name: str):
 # API Structure: /api/memory/{vectorstore_name}/{operation}
 # =============================================================================
 
+def check_early_cache_for_question(question: str, vectorstore_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Check if a user question has been cached previously using LangCache API.
+
+    This function implements early caching by:
+    1. Extracting just the user's question from the request
+    2. Checking LangCache for a previously cached response
+    3. Returning the cached response immediately if found
+
+    Args:
+        question: The user's question text
+        vectorstore_name: Name of the vectorstore (used as context)
+
+    Returns:
+        Cached response dict if found, None otherwise
+    """
+    try:
+        # Check if LangCache is configured
+        if not all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+            print("ℹ️ LangCache not configured for early caching")
+            return None
+
+        # Initialize LangCache client
+        langcache_client = LangCacheClient()
+
+        # Create a unique cache key for early caching that won't conflict with existing LLM caching
+        # Use a very specific format that's different from internal LLM prompts
+        cache_key = f"EARLY_ASK_ENDPOINT_CACHE_V1:{vectorstore_name}:{question}"
+        messages = [{"role": "user", "content": cache_key}]
+
+        # Search for cached response
+        print(f"🔍 EARLY CACHE: Checking cache for question: {question[:60]}{'...' if len(question) > 60 else ''}")
+        print(f"🔍 EARLY CACHE: Using cache key: '{cache_key}'")
+        cached_response = langcache_client.search_cache(
+            messages=messages
+        )
+
+        if cached_response:
+            print(f"✅ EARLY CACHE HIT: Found cached response for question")
+            print(f"✅ EARLY CACHE: Similarity score: {cached_response.get('_similarity_score', 'Unknown')}")
+            # Parse the cached response back to the expected format
+            try:
+                cached_data = json.loads(cached_response['content'])
+                # Add cache metadata
+                cached_data['_cache_hit'] = True
+                cached_data['_cached_at'] = cached_response.get('_cached_at')
+                cached_data['_similarity_score'] = cached_response.get('_similarity_score')
+                print(f"✅ EARLY CACHE: Returning cached answer: {cached_data.get('answer', 'No answer')[:50]}...")
+                return cached_data
+            except json.JSONDecodeError:
+                print("⚠️ EARLY CACHE: Failed to parse cached response as JSON")
+                return None
+        else:
+            print("❌ EARLY CACHE MISS: No cached response found")
+            return None
+
+    except Exception as e:
+        print(f"⚠️ EARLY CACHE ERROR: {e}")
+        return None
+
+def store_early_cache_for_question(question: str, vectorstore_name: str, response_data: Dict[str, Any]) -> bool:
+    """
+    Store a question response in the early cache using LangCache API.
+
+    Args:
+        question: The user's question text
+        vectorstore_name: Name of the vectorstore (used as context)
+        response_data: The response data to cache
+
+    Returns:
+        True if stored successfully, False otherwise
+    """
+    try:
+        # Check if LangCache is configured
+        if not all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+            return False
+
+        # Initialize LangCache client
+        langcache_client = LangCacheClient()
+
+        # Create the same unique cache key format used in the check function
+        cache_key = f"EARLY_ASK_ENDPOINT_CACHE_V1:{vectorstore_name}:{question}"
+        messages = [{"role": "user", "content": cache_key}]
+
+        # Remove cache metadata from response before storing
+        clean_response = {k: v for k, v in response_data.items()
+                         if not k.startswith('_cache')}
+
+        # Store as JSON string
+        response_json = json.dumps(clean_response)
+
+        print(f"💾 EARLY CACHE: Storing response for question: {question[:60]}{'...' if len(question) > 60 else ''}")
+        success = langcache_client.store_cache(
+            messages=messages,
+            response=response_json
+        )
+
+        if success:
+            print("✅ EARLY CACHE: Successfully stored response")
+        else:
+            print("❌ EARLY CACHE: Failed to store response")
+
+        return success
+
+    except Exception as e:
+        print(f"⚠️ EARLY CACHE STORE ERROR: {e}")
+        return False
 
 
 @app.post('/api/memory/{vectorstore_name}/ask')
@@ -865,6 +973,16 @@ async def api_kline_answer(vectorstore_name: str, request: KLineAnswerRequest):
 
         if not question:
             raise HTTPException(status_code=400, detail='Question is required')
+
+        # EARLY CACHING: Check if this exact question has been cached before
+        # This avoids redundant memory searches and LLM calls for frequently asked questions
+        print(f"🔍 ENDPOINT: About to check early cache for question: '{question}'")
+        cached_response = check_early_cache_for_question(question, vectorstore_name)
+        if cached_response:
+            print(f"🚀 ENDPOINT: EARLY CACHE HIT! Returning cached response for question")
+            return cached_response
+        else:
+            print(f"❌ ENDPOINT: Early cache miss, proceeding with normal processing")
 
         print(f"🤔 K-LINE API: Answering question via mental state construction: {question} (top_k: {top_k})")
         print(f"📦 Vectorstore: {vectorstore_name}")
@@ -901,6 +1019,12 @@ async def api_kline_answer(vectorstore_name: str, request: KLineAnswerRequest):
             **answer_response,  # Spread the structured response (answer, confidence, supporting_memories, etc.)
             'kline': kline_result  # Include the constructed mental state
         }
+
+        # EARLY CACHING: Store the response for future use
+        # This caches the complete response to avoid redundant processing
+        print(f"💾 ENDPOINT: About to store response in early cache for question: '{question}'")
+        cache_stored = store_early_cache_for_question(question, vectorstore_name, response_data)
+        print(f"💾 ENDPOINT: Cache storage result: {cache_stored}")
 
         return response_data
 

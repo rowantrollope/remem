@@ -7,6 +7,7 @@ Uses the REST API endpoints for storing and retrieving cached LLM responses.
 """
 
 import os
+import json
 import requests
 from typing import Dict, Any, Optional, List
 
@@ -144,16 +145,21 @@ class LangCacheClient:
         """
         try:
             prompt = self._create_prompt_key(messages)
-            
+
             # Prepare request data
             request_data = {
                 "prompt": prompt
             }
-            
+
             # Add attributes if provided
             if attributes:
                 request_data["attributes"] = attributes
-            
+
+            # DEBUG: Print the search query being sent to LangCache
+            print(f"🔍 LANGCACHE SEARCH: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+            print(f"🔍 LANGCACHE SEARCH URL: {self.base_url}/entries/search")
+            print(f"🔍 LANGCACHE SEARCH REQUEST JSON: {json.dumps(request_data, indent=2)}")
+
             # Make API call
             response = requests.post(
                 f"{self.base_url}/entries/search",
@@ -161,23 +167,38 @@ class LangCacheClient:
                 json=request_data,
                 timeout=10
             )
+
+            # DEBUG: Print the response details
+            print(f"🔍 LANGCACHE SEARCH RESPONSE STATUS: {response.status_code}")
+            print(f"🔍 LANGCACHE SEARCH RESPONSE HEADERS: {dict(response.headers)}")
+            try:
+                response_json = response.json()
+                print(f"🔍 LANGCACHE SEARCH RESPONSE JSON: {json.dumps(response_json, indent=2)}")
+            except:
+                print(f"🔍 LANGCACHE SEARCH RESPONSE TEXT: {response.text}")
             
             if response.status_code == 200:
                 result = response.json()
-                if result and 'response' in result:
+                # LangCache returns results in a 'data' array
+                if result and 'data' in result and len(result['data']) > 0:
+                    # Get the best match (first item in the array)
+                    best_match = result['data'][0]
                     self.stats['hits'] += 1
+                    print(f"✅ LANGCACHE HIT: Found cached response (similarity: {best_match.get('similarity', 'N/A')})")
                     return {
-                        'content': result['response'],
+                        'content': best_match['response'],
                         '_cache_hit': True,
-                        '_cached_at': result.get('created_at'),
-                        '_similarity_score': result.get('similarity_score')
+                        '_cached_at': best_match.get('created_at'),
+                        '_similarity_score': best_match.get('similarity')
                     }
                 else:
                     self.stats['misses'] += 1
+                    print(f"❌ LANGCACHE MISS: No cached response found")
                     return None
             elif response.status_code == 404:
                 # No matching cache entry found
                 self.stats['misses'] += 1
+                print(f"❌ LANGCACHE MISS: No matching cache entry (404)")
                 return None
             else:
                 self.stats['errors'] += 1
@@ -204,17 +225,23 @@ class LangCacheClient:
         """
         try:
             prompt = self._create_prompt_key(messages)
-            
+
             # Prepare request data
             request_data = {
                 "prompt": prompt,
                 "response": response
             }
-            
+
             # Add attributes if provided (but LangCache API is very strict about allowed attributes)
             if attributes:
                 request_data["attributes"] = attributes
-            
+
+            # DEBUG: Print the store query being sent to LangCache
+            print(f"💾 LANGCACHE STORE: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+            print(f"💾 LANGCACHE STORE URL: {self.base_url}/entries")
+            print(f"💾 LANGCACHE STORE RESPONSE: {response[:100]}{'...' if len(response) > 100 else ''}")
+            print(f"💾 LANGCACHE STORE REQUEST JSON: {json.dumps(request_data, indent=2)}")
+
             # Make API call
             api_response = requests.post(
                 f"{self.base_url}/entries",
@@ -222,9 +249,19 @@ class LangCacheClient:
                 json=request_data,
                 timeout=10
             )
-            
+
+            # DEBUG: Print the response details
+            print(f"💾 LANGCACHE STORE RESPONSE STATUS: {api_response.status_code}")
+            print(f"💾 LANGCACHE STORE RESPONSE HEADERS: {dict(api_response.headers)}")
+            try:
+                store_response_json = api_response.json()
+                print(f"💾 LANGCACHE STORE RESPONSE JSON: {json.dumps(store_response_json, indent=2)}")
+            except:
+                print(f"💾 LANGCACHE STORE RESPONSE TEXT: {api_response.text}")
+
             if api_response.status_code in [200, 201]:
                 self.stats['stores'] += 1
+                print(f"✅ LANGCACHE STORED: Successfully cached response")
                 return True
             else:
                 self.stats['errors'] += 1
@@ -323,6 +360,7 @@ class CachedLLMClient:
         # Check if caching is enabled for this operation type
         if not is_cache_enabled_for_operation(operation_type):
             # Caching disabled for this operation, call LLM directly
+            print(f"🚫 LANGCACHE DISABLED: Caching disabled for operation type '{operation_type}'")
             response = self.llm_client.chat_completion(
                 messages=messages,
                 temperature=temperature,
