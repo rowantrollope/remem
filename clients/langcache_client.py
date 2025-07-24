@@ -132,13 +132,15 @@ class LangCacheClient:
         return user_content
     
     def search_cache(self, messages: List[Dict[str, str]],
-                    attributes: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+                    attributes: Dict[str, Any] = None,
+                    min_similarity: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
         Search for cached response using semantic similarity.
 
         Args:
             messages: Chat messages
             attributes: Additional attributes for scoping
+            min_similarity: Minimum similarity threshold (0.0-1.0). If None, uses config default.
 
         Returns:
             Cached response dict or None if not found
@@ -146,9 +148,27 @@ class LangCacheClient:
         try:
             prompt = self._create_prompt_key(messages)
 
+            # Get minimum similarity threshold from config or parameter
+            if min_similarity is None:
+                try:
+                    # Import here to avoid circular imports
+                    import sys
+                    if 'web_app' in sys.modules:
+                        web_app = sys.modules['web_app']
+                        if hasattr(web_app, 'app_config'):
+                            config = web_app.app_config
+                            min_similarity = config.get('langcache', {}).get('minimum_similarity', 0.95)
+                        else:
+                            min_similarity = 0.95
+                    else:
+                        min_similarity = 0.95
+                except Exception:
+                    min_similarity = 0.95
+
             # Prepare request data
             request_data = {
-                "prompt": prompt
+                "prompt": prompt,
+                "similarityThreshold": min_similarity
             }
 
             # Add attributes if provided
@@ -157,8 +177,6 @@ class LangCacheClient:
 
             # DEBUG: Print the search query being sent to LangCache
             print(f"🔍 LANGCACHE SEARCH: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
-            print(f"🔍 LANGCACHE SEARCH URL: {self.base_url}/entries/search")
-            print(f"🔍 LANGCACHE SEARCH REQUEST JSON: {json.dumps(request_data, indent=2)}")
 
             # Make API call
             response = requests.post(
@@ -169,8 +187,6 @@ class LangCacheClient:
             )
 
             # DEBUG: Print the response details
-            print(f"🔍 LANGCACHE SEARCH RESPONSE STATUS: {response.status_code}")
-            print(f"🔍 LANGCACHE SEARCH RESPONSE HEADERS: {dict(response.headers)}")
             try:
                 response_json = response.json()
                 print(f"🔍 LANGCACHE SEARCH RESPONSE JSON: {json.dumps(response_json, indent=2)}")
@@ -183,8 +199,9 @@ class LangCacheClient:
                 if result and 'data' in result and len(result['data']) > 0:
                     # Get the best match (first item in the array)
                     best_match = result['data'][0]
+                    similarity_score = best_match.get('similarity', 'N/A')
                     self.stats['hits'] += 1
-                    print(f"✅ LANGCACHE HIT: Found cached response (similarity: {best_match.get('similarity', 'N/A')})")
+                    print(f"✅ LANGCACHE HIT: Found cached response (similarity: {similarity_score}, threshold: {min_similarity:.3f})")
                     return {
                         'content': best_match['response'],
                         '_cache_hit': True,
@@ -193,7 +210,7 @@ class LangCacheClient:
                     }
                 else:
                     self.stats['misses'] += 1
-                    print(f"❌ LANGCACHE MISS: No cached response found")
+                    print(f"❌ LANGCACHE MISS: No cached response found (threshold: {min_similarity:.3f})")
                     return None
             elif response.status_code == 404:
                 # No matching cache entry found
@@ -211,7 +228,8 @@ class LangCacheClient:
             return None
     
     def store_cache(self, messages: List[Dict[str, str]], response: str,
-                   attributes: Dict[str, Any] = None) -> bool:
+                   attributes: Dict[str, Any] = None,
+                   ttl_minutes: Optional[float] = None) -> bool:
         """
         Store response in cache.
 
@@ -219,6 +237,7 @@ class LangCacheClient:
             messages: Chat messages
             response: LLM response to cache
             attributes: Additional attributes
+            ttl_minutes: Time to live in minutes. If None, uses config default.
 
         Returns:
             True if stored successfully
@@ -226,10 +245,31 @@ class LangCacheClient:
         try:
             prompt = self._create_prompt_key(messages)
 
+            # Get TTL from config or parameter
+            if ttl_minutes is None:
+                try:
+                    # Import here to avoid circular imports
+                    import sys
+                    if 'web_app' in sys.modules:
+                        web_app = sys.modules['web_app']
+                        if hasattr(web_app, 'app_config'):
+                            config = web_app.app_config
+                            ttl_minutes = config.get('langcache', {}).get('ttl_minutes', 2)
+                        else:
+                            ttl_minutes = 2
+                    else:
+                        ttl_minutes = 2
+                except Exception:
+                    ttl_minutes = 2
+
+            # Convert minutes to milliseconds for LangCache API
+            ttl_millis = int(ttl_minutes * 60 * 1000)
+
             # Prepare request data
             request_data = {
                 "prompt": prompt,
-                "response": response
+                "response": response,
+                "ttlMillis": ttl_millis
             }
 
             # Add attributes if provided (but LangCache API is very strict about allowed attributes)
@@ -240,6 +280,7 @@ class LangCacheClient:
             print(f"💾 LANGCACHE STORE: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
             print(f"💾 LANGCACHE STORE URL: {self.base_url}/entries")
             print(f"💾 LANGCACHE STORE RESPONSE: {response[:100]}{'...' if len(response) > 100 else ''}")
+            print(f"💾 LANGCACHE STORE TTL: {ttl_minutes} minutes ({ttl_millis} ms)")
             print(f"💾 LANGCACHE STORE REQUEST JSON: {json.dumps(request_data, indent=2)}")
 
             # Make API call

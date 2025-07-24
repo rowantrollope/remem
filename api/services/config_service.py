@@ -381,6 +381,32 @@ class ConfigService:
                             config['langcache']['cache_types'][cache_type] = new_value
                             changes.append(f"langcache.cache_types.{cache_type}: {old_value} → {new_value}")
 
+        # Update minimum similarity threshold
+        if 'minimum_similarity' in langcache_config:
+            old_value = config['langcache'].get('minimum_similarity')
+            new_value = float(langcache_config['minimum_similarity'])
+
+            # Validate range
+            if not (0.0 <= new_value <= 1.0):
+                raise ValueError(f"minimum_similarity must be between 0.0 and 1.0, got {new_value}")
+
+            if old_value != new_value:
+                config['langcache']['minimum_similarity'] = new_value
+                changes.append(f"langcache.minimum_similarity: {old_value} → {new_value}")
+
+        # Update TTL setting
+        if 'ttl_minutes' in langcache_config:
+            old_value = config['langcache'].get('ttl_minutes')
+            new_value = float(langcache_config['ttl_minutes'])
+
+            # Validate range (allow 0.1 minutes to 1440 minutes = 24 hours)
+            if not (0.1 <= new_value <= 1440):
+                raise ValueError(f"ttl_minutes must be between 0.1 and 1440 (24 hours), got {new_value}")
+
+            if old_value != new_value:
+                config['langcache']['ttl_minutes'] = new_value
+                changes.append(f"langcache.ttl_minutes: {old_value} → {new_value}")
+
         return changes
 
     def _reinitialize_llm_manager(self) -> Tuple[bool, str]:

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Settings, CheckCircle, AlertCircle } from "lucide-react"
 import { useConfiguredAPI } from "@/hooks/useConfiguredAPI"
@@ -20,6 +21,8 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
     const [isSaving, setIsSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState<string | null>(null)
+    const [tempMinSimilarity, setTempMinSimilarity] = useState<string>("0.95")
+    const [tempTtlMinutes, setTempTtlMinutes] = useState<string>("2")
     const { api, isLoaded: apiConfigLoaded } = useConfiguredAPI()
 
     // Load current configuration
@@ -35,6 +38,13 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
 
                 if (response.success && response.config) {
                     setConfig(response.config)
+                    // Set temp values from config
+                    if (response.config.langcache?.minimum_similarity !== undefined) {
+                        setTempMinSimilarity(response.config.langcache.minimum_similarity.toString())
+                    }
+                    if (response.config.langcache?.ttl_minutes !== undefined) {
+                        setTempTtlMinutes(response.config.langcache.ttl_minutes.toString())
+                    }
                 } else {
                     console.error('System config response failed or missing config:', response)
                     setError('Failed to load system configuration')
@@ -48,6 +58,8 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
                     setConfig({
                         langcache: {
                             enabled: true,
+                            minimum_similarity: 0.95,
+                            ttl_minutes: 2,
                             cache_types: {
                                 memory_extraction: false,
                                 query_optimization: true,
@@ -56,7 +68,7 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
                                 memory_grounding: true
                             }
                         }
-                    })
+                    } as SystemConfig)
                     setError('Cache configuration API not available. Showing default values.')
                 } else {
                     setError(`Failed to load cache configuration: ${err instanceof Error ? err.message : 'Unknown error'}`)
@@ -103,7 +115,45 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
         await updateConfig(updateRequest)
     }
 
-    const updateConfig = async (updateRequest: CacheConfigUpdateRequest) => {
+    const handleMinSimilarityUpdate = async () => {
+        if (!config) return
+
+        const value = parseFloat(tempMinSimilarity)
+        if (isNaN(value) || value < 0.0 || value > 1.0) return
+
+        const updateRequest: CacheConfigUpdateRequest = {
+            langcache: {
+                minimum_similarity: value
+            }
+        }
+
+        const success = await updateConfig(updateRequest)
+        if (success && config.langcache) {
+            // Update temp value to match the saved value
+            setTempMinSimilarity(value.toString())
+        }
+    }
+
+    const handleTtlUpdate = async () => {
+        if (!config) return
+
+        const value = parseFloat(tempTtlMinutes)
+        if (isNaN(value) || value < 0.1 || value > 1440) return
+
+        const updateRequest: CacheConfigUpdateRequest = {
+            langcache: {
+                ttl_minutes: value
+            }
+        }
+
+        const success = await updateConfig(updateRequest)
+        if (success && config.langcache) {
+            // Update temp value to match the saved value
+            setTempTtlMinutes(value.toString())
+        }
+    }
+
+    const updateConfig = async (updateRequest: CacheConfigUpdateRequest): Promise<boolean> => {
         try {
             setIsSaving(true)
             setError(null)
@@ -113,12 +163,15 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
             if (response.success) {
                 setConfig(response.config)
                 setSuccess(response.message || 'Cache configuration updated successfully')
+                return true
             } else {
                 setError('Failed to update cache configuration')
+                return false
             }
         } catch (err) {
             console.error('Error updating cache config:', err)
             setError('Failed to update cache configuration')
+            return false
         } finally {
             setIsSaving(false)
         }
@@ -241,6 +294,95 @@ export function CacheSettingsCard({ className }: CacheSettingsCardProps) {
                         onCheckedChange={handleMasterToggle}
                         disabled={isSaving}
                     />
+                </div>
+
+                {/* Minimum Similarity Setting */}
+                <div className="p-4 border rounded-lg">
+                    <div className="space-y-3">
+                        <div className="space-y-1">
+                            <Label className="text-base font-medium">Minimum Similarity Threshold</Label>
+                            <p className="text-sm text-gray-600">
+                                Minimum similarity score (0.0-1.0) required for cache hits. Higher values require more precise matches.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <Input
+                                type="number"
+                                min="0.0"
+                                max="1.0"
+                                step="0.01"
+                                value={tempMinSimilarity}
+                                onChange={(e) => setTempMinSimilarity(e.target.value)}
+                                className="w-24"
+                                disabled={isSaving || !config?.langcache?.enabled}
+                            />
+                            <Button
+                                onClick={handleMinSimilarityUpdate}
+                                size="sm"
+                                disabled={
+                                    isSaving ||
+                                    !config?.langcache?.enabled ||
+                                    tempMinSimilarity === (config?.langcache?.minimum_similarity?.toString() || "0.95") ||
+                                    parseFloat(tempMinSimilarity) < 0.0 ||
+                                    parseFloat(tempMinSimilarity) > 1.0 ||
+                                    isNaN(parseFloat(tempMinSimilarity))
+                                }
+                            >
+                                Save
+                            </Button>
+                        </div>
+                        <p className="text-xs text-gray-600">
+                            Current setting:{" "}
+                            <span className="font-mono font-medium">
+                                {config?.langcache?.minimum_similarity || 0.95}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+
+                {/* TTL Setting */}
+                <div className="p-4 border rounded-lg">
+                    <div className="space-y-3">
+                        <div className="space-y-1">
+                            <Label className="text-base font-medium">Cache Entry TTL (Time To Live)</Label>
+                            <p className="text-sm text-gray-600">
+                                How long cache entries remain valid (in minutes). Range: 0.1 to 1440 minutes (24 hours).
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <Input
+                                type="number"
+                                min="0.1"
+                                max="1440"
+                                step="0.1"
+                                value={tempTtlMinutes}
+                                onChange={(e) => setTempTtlMinutes(e.target.value)}
+                                className="w-24"
+                                disabled={isSaving || !config?.langcache?.enabled}
+                            />
+                            <span className="text-sm text-gray-600">minutes</span>
+                            <Button
+                                onClick={handleTtlUpdate}
+                                size="sm"
+                                disabled={
+                                    isSaving ||
+                                    !config?.langcache?.enabled ||
+                                    tempTtlMinutes === (config?.langcache?.ttl_minutes?.toString() || "2") ||
+                                    parseFloat(tempTtlMinutes) < 0.1 ||
+                                    parseFloat(tempTtlMinutes) > 1440 ||
+                                    isNaN(parseFloat(tempTtlMinutes))
+                                }
+                            >
+                                Save
+                            </Button>
+                        </div>
+                        <p className="text-xs text-gray-600">
+                            Current setting:{" "}
+                            <span className="font-mono font-medium">
+                                {config?.langcache?.ttl_minutes || 2} minutes
+                            </span>
+                        </p>
+                    </div>
                 </div>
 
                 {/* Individual Cache Type Toggles */}

@@ -61,7 +61,9 @@ app_config: Dict[str, Any] = {
     },
     "langcache": {
         "enabled": True,  # Master switch for all caching
-        "cache_types": CACHE_TYPES.copy()
+        "cache_types": CACHE_TYPES.copy(),
+        "minimum_similarity": 0.95,  # Minimum similarity threshold for cache hits
+        "ttl_minutes": 2  # Time to live in minutes for cache entries
     }
 }
 
