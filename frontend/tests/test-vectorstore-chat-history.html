@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Vectorstore Chat History</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .result { margin: 10px 0; padding: 10px; background: #f5f5f5; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        button { margin: 5px; padding: 8px 16px; }
+    </style>
+</head>
+<body>
+    <h1>Test Vectorstore-Specific Chat History</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: Different Storage Keys</h2>
+        <button onclick="testStorageKeys()">Test Storage Keys</button>
+        <div id="storage-keys-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Isolated Chat History</h2>
+        <button onclick="testIsolatedHistory()">Test Isolated History</button>
+        <div id="isolated-history-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Clear Specific Vectorstore</h2>
+        <button onclick="testClearSpecific()">Test Clear Specific</button>
+        <div id="clear-specific-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Current localStorage Contents</h2>
+        <button onclick="showLocalStorage()">Show localStorage</button>
+        <div id="localstorage-result" class="result"></div>
+    </div>
+
+    <script>
+        // Simulate the usePersistentChat hook logic
+        function createChatStorageKey(vectorSetName) {
+            return `memory-chat-history-${vectorSetName}`;
+        }
+
+        function testStorageKeys() {
+            const result = document.getElementById('storage-keys-result');
+            
+            try {
+                const key1 = createChatStorageKey('memories');
+                const key2 = createChatStorageKey('travel_agent_memory');
+                const key3 = createChatStorageKey('retail_agent_memory');
+                
+                const expected1 = 'memory-chat-history-memories';
+                const expected2 = 'memory-chat-history-travel_agent_memory';
+                const expected3 = 'memory-chat-history-retail_agent_memory';
+                
+                if (key1 === expected1 && key2 === expected2 && key3 === expected3) {
+                    result.className = 'result success';
+                    result.innerHTML = `
+                        ✅ Storage keys generated correctly:<br>
+                        - memories: ${key1}<br>
+                        - travel_agent_memory: ${key2}<br>
+                        - retail_agent_memory: ${key3}
+                    `;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `❌ Storage keys incorrect`;
+                }
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Error: ${error.message}`;
+            }
+        }
+
+        function testIsolatedHistory() {
+            const result = document.getElementById('isolated-history-result');
+            
+            try {
+                // Clear any existing data
+                localStorage.removeItem('memory-chat-history-test1');
+                localStorage.removeItem('memory-chat-history-test2');
+                
+                // Create test data for two different vectorsets
+                const testData1 = {
+                    version: '1.0',
+                    data: {
+                        conversations: [{ id: '1', question: 'Test question 1', answer: 'Test answer 1', created_at: new Date().toISOString() }],
+                        memorySaveResponses: [],
+                        recallResponses: [],
+                        searchResponses: [],
+                        lastUpdated: new Date().toISOString()
+                    },
+                    savedAt: new Date().toISOString()
+                };
+                
+                const testData2 = {
+                    version: '1.0',
+                    data: {
+                        conversations: [{ id: '2', question: 'Test question 2', answer: 'Test answer 2', created_at: new Date().toISOString() }],
+                        memorySaveResponses: [],
+                        recallResponses: [],
+                        searchResponses: [],
+                        lastUpdated: new Date().toISOString()
+                    },
+                    savedAt: new Date().toISOString()
+                };
+                
+                // Store data for different vectorsets
+                localStorage.setItem('memory-chat-history-test1', JSON.stringify(testData1));
+                localStorage.setItem('memory-chat-history-test2', JSON.stringify(testData2));
+                
+                // Verify isolation
+                const stored1 = JSON.parse(localStorage.getItem('memory-chat-history-test1'));
+                const stored2 = JSON.parse(localStorage.getItem('memory-chat-history-test2'));
+                
+                if (stored1.data.conversations[0].question === 'Test question 1' && 
+                    stored2.data.conversations[0].question === 'Test question 2') {
+                    result.className = 'result success';
+                    result.innerHTML = `
+                        ✅ Chat history properly isolated:<br>
+                        - test1 vectorset: "${stored1.data.conversations[0].question}"<br>
+                        - test2 vectorset: "${stored2.data.conversations[0].question}"
+                    `;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `❌ Chat history not properly isolated`;
+                }
+                
+                // Clean up
+                localStorage.removeItem('memory-chat-history-test1');
+                localStorage.removeItem('memory-chat-history-test2');
+                
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Error: ${error.message}`;
+            }
+        }
+
+        function testClearSpecific() {
+            const result = document.getElementById('clear-specific-result');
+            
+            try {
+                // Create test data for multiple vectorsets
+                const testData = {
+                    version: '1.0',
+                    data: {
+                        conversations: [{ id: '1', question: 'Test', answer: 'Test', created_at: new Date().toISOString() }],
+                        memorySaveResponses: [],
+                        recallResponses: [],
+                        searchResponses: [],
+                        lastUpdated: new Date().toISOString()
+                    }
+                };
+                
+                localStorage.setItem('memory-chat-history-vectorset1', JSON.stringify(testData));
+                localStorage.setItem('memory-chat-history-vectorset2', JSON.stringify(testData));
+                
+                // Clear only one vectorset
+                localStorage.removeItem('memory-chat-history-vectorset1');
+                
+                // Check that only one was cleared
+                const cleared = localStorage.getItem('memory-chat-history-vectorset1');
+                const remaining = localStorage.getItem('memory-chat-history-vectorset2');
+                
+                if (cleared === null && remaining !== null) {
+                    result.className = 'result success';
+                    result.innerHTML = `✅ Specific vectorset cleared successfully while preserving others`;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `❌ Clear specific vectorset failed`;
+                }
+                
+                // Clean up
+                localStorage.removeItem('memory-chat-history-vectorset2');
+                
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Error: ${error.message}`;
+            }
+        }
+
+        function showLocalStorage() {
+            const result = document.getElementById('localstorage-result');
+            
+            try {
+                const chatHistoryKeys = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key && key.startsWith('memory-chat-history-')) {
+                        chatHistoryKeys.push(key);
+                    }
+                }
+                
+                if (chatHistoryKeys.length === 0) {
+                    result.className = 'result';
+                    result.innerHTML = 'No chat history found in localStorage';
+                } else {
+                    result.className = 'result';
+                    result.innerHTML = `
+                        Found ${chatHistoryKeys.length} chat history entries:<br>
+                        ${chatHistoryKeys.map(key => `- ${key}`).join('<br>')}
+                    `;
+                }
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

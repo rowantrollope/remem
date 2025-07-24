@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VectorStore Persistence Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <h1>VectorStore Persistence Test</h1>
+    <p>This page tests the VectorStoreSelector persistence functionality.</p>
+
+    <div class="test-section">
+        <h2>Test 1: Add Custom VectorStore</h2>
+        <p>This simulates what happens when a user creates a new vectorset like "newmem".</p>
+        <button onclick="addCustomVectorStore('newmem')">Add "newmem" to custom vectorsets</button>
+        <button onclick="addCustomVectorStore('test-vectorset')">Add "test-vectorset" to custom vectorsets</button>
+        <button onclick="addCustomVectorStore('my-project-memory')">Add "my-project-memory" to custom vectorsets</button>
+        <div id="add-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: View Current Custom VectorStores</h2>
+        <button onclick="showCustomVectorStores()">Show Custom VectorStores</button>
+        <div id="show-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Clear All Custom VectorStores</h2>
+        <button onclick="clearCustomVectorStores()">Clear All Custom VectorStores</button>
+        <div id="clear-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 4: Check Predefined VectorStores</h2>
+        <p>These should NOT be added to custom list (they're already predefined):</p>
+        <button onclick="addCustomVectorStore('memories')">Try to add "memories" (should be ignored)</button>
+        <button onclick="addCustomVectorStore('travel_agent_memory')">Try to add "travel_agent_memory" (should be ignored)</button>
+        <div id="predefined-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Current localStorage Contents</h2>
+        <button onclick="showLocalStorage()">Show All localStorage</button>
+        <div id="localstorage-result" class="result"></div>
+    </div>
+
+    <script>
+        // Constants matching the VectorStoreSelector component
+        const CUSTOM_VECTORSTORES_STORAGE_KEY = 'custom-vectorset-names';
+        const PREDEFINED_VECTORSTORES = [
+            'memories',
+            'travel_agent_memory', 
+            'retail_agent_memory',
+            'investment_agent_memory'
+        ];
+
+        // Function to add a custom vectorset (simulating the component logic)
+        function addCustomVectorStore(name) {
+            const trimmedName = name.trim();
+            if (!trimmedName) {
+                document.getElementById('add-result').textContent = 'Error: Empty name provided';
+                document.getElementById('add-result').className = 'result error';
+                return;
+            }
+
+            // Check if it's already in predefined list
+            const isPredefined = PREDEFINED_VECTORSTORES.includes(trimmedName);
+            if (isPredefined) {
+                document.getElementById('add-result').textContent = `"${trimmedName}" is predefined - not added to custom list`;
+                document.getElementById('add-result').className = 'result';
+                document.getElementById('predefined-result').textContent = `"${trimmedName}" is predefined - correctly ignored`;
+                document.getElementById('predefined-result').className = 'result success';
+                return;
+            }
+
+            // Get current custom vectorsets
+            let customVectorStores = [];
+            try {
+                const saved = localStorage.getItem(CUSTOM_VECTORSTORES_STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (Array.isArray(parsed)) {
+                        customVectorStores = parsed;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load custom vectorset names:', error);
+            }
+
+            // Check if already exists
+            if (customVectorStores.includes(trimmedName)) {
+                document.getElementById('add-result').textContent = `"${trimmedName}" already exists in custom list`;
+                document.getElementById('add-result').className = 'result';
+                return;
+            }
+
+            // Add to list
+            customVectorStores.push(trimmedName);
+            
+            // Save to localStorage
+            try {
+                localStorage.setItem(CUSTOM_VECTORSTORES_STORAGE_KEY, JSON.stringify(customVectorStores));
+                document.getElementById('add-result').textContent = `Successfully added "${trimmedName}" to custom vectorsets`;
+                document.getElementById('add-result').className = 'result success';
+            } catch (error) {
+                document.getElementById('add-result').textContent = `Failed to save: ${error.message}`;
+                document.getElementById('add-result').className = 'result error';
+            }
+        }
+
+        function showCustomVectorStores() {
+            try {
+                const saved = localStorage.getItem(CUSTOM_VECTORSTORES_STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (Array.isArray(parsed)) {
+                        document.getElementById('show-result').textContent = `Custom VectorStores: ${JSON.stringify(parsed, null, 2)}`;
+                        document.getElementById('show-result').className = 'result success';
+                    } else {
+                        document.getElementById('show-result').textContent = 'Invalid data format in localStorage';
+                        document.getElementById('show-result').className = 'result error';
+                    }
+                } else {
+                    document.getElementById('show-result').textContent = 'No custom vectorsets found';
+                    document.getElementById('show-result').className = 'result';
+                }
+            } catch (error) {
+                document.getElementById('show-result').textContent = `Error: ${error.message}`;
+                document.getElementById('show-result').className = 'result error';
+            }
+        }
+
+        function clearCustomVectorStores() {
+            try {
+                localStorage.removeItem(CUSTOM_VECTORSTORES_STORAGE_KEY);
+                document.getElementById('clear-result').textContent = 'Successfully cleared all custom vectorsets';
+                document.getElementById('clear-result').className = 'result success';
+            } catch (error) {
+                document.getElementById('clear-result').textContent = `Error: ${error.message}`;
+                document.getElementById('clear-result').className = 'result error';
+            }
+        }
+
+        function showLocalStorage() {
+            const result = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const value = localStorage.getItem(key);
+                try {
+                    result[key] = JSON.parse(value);
+                } catch {
+                    result[key] = value;
+                }
+            }
+            document.getElementById('localstorage-result').textContent = JSON.stringify(result, null, 2);
+            document.getElementById('localstorage-result').className = 'result';
+        }
+
+        // Auto-refresh display on page load
+        window.addEventListener('load', () => {
+            showCustomVectorStores();
+            showLocalStorage();
+        });
+    </script>
+</body>
+</html>
