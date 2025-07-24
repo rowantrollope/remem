@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # Redis service with RedisSearch module
+  redis:
+    image: redis:8-alpine
+    container_name: remem-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Remem Memory Agent API
+  remem-api:
+    build:
+      context: .
+      target: production
+    container_name: remem-api
+    ports:
+      - "5001:5001"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGCACHE_HOST=${LANGCACHE_HOST:-}
+      - LANGCACHE_API_KEY=${LANGCACHE_API_KEY:-}
+      - LANGCACHE_CACHE_ID=${LANGCACHE_CACHE_ID:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Development service (alternative to production)
+  remem-dev:
+    build:
+      context: .
+      target: development
+    container_name: remem-dev
+    ports:
+      - "5001:5001"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGCACHE_HOST=${LANGCACHE_HOST:-}
+      - LANGCACHE_API_KEY=${LANGCACHE_API_KEY:-}
+      - LANGCACHE_CACHE_ID=${LANGCACHE_CACHE_ID:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    command: ["python", "web_app.py"]
+    profiles:
+      - dev
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: remem-network

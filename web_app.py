@@ -22,7 +22,7 @@ async def startup_event():
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(
-        "web_app_new:app",
+        "web_app:app",
         host="0.0.0.0",
         port=5001,
         log_level="info",

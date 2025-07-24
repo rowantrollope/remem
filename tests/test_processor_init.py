@@ -28,7 +28,7 @@ def test_processor_init():
         print("✅ Processor created successfully!")
         
         # Test LLM manager
-        from llm_manager import get_llm_manager
+        from llm.llm_manager import get_llm_manager
         llm_manager = get_llm_manager()
         print("✅ LLM manager accessible!")
         

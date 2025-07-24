@@ -188,7 +188,7 @@ LLM_TIER2_BASE_URL=http://localhost:11434
 ### Test Script
 Run the included test script:
 ```bash
-python test_llm_config.py
+python tests/test_llm_config.py
 ```
 
 ### Manual Testing

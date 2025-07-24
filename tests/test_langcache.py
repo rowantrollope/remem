@@ -20,7 +20,7 @@ def test_langcache_client():
     print("🧪 Testing LangCache Client...")
     
     try:
-        from langcache_client import LangCacheClient, CachedLLMClient
+        from clients.langcache_client import LangCacheClient, CachedLLMClient
         
         # Check if environment variables are set
         required_vars = ["LANGCACHE_HOST", "LANGCACHE_API_KEY", "LANGCACHE_CACHE_ID"]
@@ -119,7 +119,7 @@ def test_fallback_behavior():
             del os.environ[var]
     
     try:
-        from langcache_client import LangCacheClient
+        from clients.langcache_client import LangCacheClient
         
         # This should raise an error due to missing env vars
         try:

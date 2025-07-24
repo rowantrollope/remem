@@ -3,7 +3,7 @@
 Test script to verify cache configuration fix
 """
 
-from langcache_client import is_cache_enabled_for_operation, LangCacheClient
+from clients.langcache_client import is_cache_enabled_for_operation, LangCacheClient
 
 def test_cache_configuration():
     """Test that memory extraction operations are disabled for caching."""

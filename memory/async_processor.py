@@ -30,7 +30,7 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memory.core_agent import MemoryAgent
-from llm_manager import get_llm_manager, init_llm_manager, LLMConfig
+from llm.llm_manager import get_llm_manager, init_llm_manager, LLMConfig
 
 
 class AsyncMemoryProcessor:

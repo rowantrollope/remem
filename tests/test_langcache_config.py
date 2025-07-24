@@ -17,7 +17,7 @@ def test_cache_configuration():
     print("🧪 Testing LangCache Configuration System...")
     
     try:
-        from langcache_client import is_cache_enabled_for_operation
+        from clients.langcache_client import is_cache_enabled_for_operation
         
         # Test without web_app loaded (should default to True)
         print("\n1. Testing without configuration loaded:")

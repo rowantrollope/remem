@@ -8,7 +8,7 @@ This script tests the new two-tier LLM configuration system with both OpenAI and
 import os
 import json
 import requests
-from llm_manager import LLMConfig, LLMManager, OpenAIClient, OllamaClient
+from llm.llm_manager import LLMConfig, LLMManager, OpenAIClient, OllamaClient
 
 def test_llm_clients():
     """Test LLM clients directly."""

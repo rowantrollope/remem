@@ -5,7 +5,7 @@ Application startup logic and initialization.
 import os
 from memory.agent import LangGraphMemoryAgent
 from memory.core_agent import MemoryAgent
-from llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager
+from llm.llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager
 from .core.config import app_config
 from .dependencies import set_memory_agent
 

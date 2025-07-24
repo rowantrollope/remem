@@ -25,8 +25,8 @@ load_dotenv()
 
 # Import LLM manager and LangCache
 sys.path.append('..')
-from llm_manager import get_llm_manager
-from langcache_client import LangCacheClient, CachedLLMClient
+from llm.llm_manager import get_llm_manager
+from clients.langcache_client import LangCacheClient, CachedLLMClient
 
 
 class RelevanceConfig:

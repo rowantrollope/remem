@@ -48,7 +48,7 @@ def check_early_cache_for_question(question: str, vectorstore_name: str) -> Opti
             return None
 
         # Initialize LangCache client
-        from langcache_client import LangCacheClient
+        from clients.langcache_client import LangCacheClient
         langcache_client = LangCacheClient()
 
         # Create a unique cache key for early caching that won't conflict with existing LLM caching
@@ -105,7 +105,7 @@ def store_early_cache_for_question(question: str, vectorstore_name: str, respons
             return False
 
         # Initialize LangCache client
-        from langcache_client import LangCacheClient
+        from clients.langcache_client import LangCacheClient
         langcache_client = LangCacheClient()
 
         # Create the same unique cache key format used in the check function

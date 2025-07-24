@@ -18,7 +18,7 @@ load_dotenv()
 
 # Import LLM manager
 sys.path.append('..')
-from llm_manager import get_llm_manager
+from llm.llm_manager import get_llm_manager
 
 
 class MemoryReasoning:

@@ -28,7 +28,7 @@ class ConfigService:
 
             # Add LLM manager status
             try:
-                from llm_manager import get_llm_manager
+                from llm.llm_manager import get_llm_manager
                 llm_mgr = get_llm_manager()
                 runtime_info["llm_manager_initialized"] = True
                 runtime_info["llm_tier1_provider"] = llm_mgr.tier1_config.provider

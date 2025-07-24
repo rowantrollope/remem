@@ -40,7 +40,7 @@ response = agent.run("What restaurants have I been to?")
 python mcp_server.py
 
 # Or use the setup script for easy configuration
-python setup_mcp_server.py
+python scripts/setup_mcp_server.py
 ```
 
 ### 🚀 Quick Setup (5 minutes)
@@ -65,7 +65,7 @@ python setup_mcp_server.py
    - CLI: `python main.py`
    - Web: `python web_app.py` → visit http://localhost:5001
    - Programmatic: Import `LangGraphMemoryAgent` in your code
-   - MCP: `python setup_mcp_server.py` → use with Claude Desktop or other MCP clients
+   - MCP: `python scripts/setup_mcp_server.py` → use with Claude Desktop or other MCP clients
 
 ## 🧠 Features
 
@@ -150,23 +150,73 @@ Then visit http://localhost:5001 for the web interface.
 
 ```bash
 # Set up MCP server for Claude Desktop
-python setup_mcp_server.py
+python scripts/setup_mcp_server.py
 
 # Or run the server directly
 python mcp_server.py
 ```
 
-The MCP server exposes memory capabilities as standardized tools for Claude Desktop and other MCP-compatible clients. See [MCP_SERVER_README.md](MCP_SERVER_README.md) for detailed setup instructions.
+The MCP server exposes memory capabilities as standardized tools for Claude Desktop and other MCP-compatible clients. See [MCP_SERVER_README.md](docs/MCP_SERVER_README.md) for detailed setup instructions.
+
+## 🐳 Docker Support
+
+Run the entire stack with Docker:
+
+```bash
+# Quick start with Docker Compose
+docker-compose up -d
+
+# Or use the Makefile
+make docker-run
+```
+
+For development:
+```bash
+# Development mode with hot reload
+make docker-dev
+```
+
+## 🛠️ Development Tools
+
+This project includes modern development tools:
+
+```bash
+# Install development dependencies
+make install-dev
+
+# Run all quality checks
+make check
+
+# Format code
+make format
+
+# Run tests
+make test
+
+# See all available commands
+make help
+```
 
 ## Project Structure
 
-- `main.py` - Entry point for running the memory agent
-- `langgraph_memory_agent.py` - LangGraph workflow orchestration for memory operations
-- `memory_agent.py` - Core memory system with Redis and OpenAI embeddings
-- `tools.py` - Memory tools for the LangGraph agent
-- `web_app.py` - Flask web API server
-- `requirements.txt` - Python dependencies
-- `.env.example` - Environment variables template
+```
+remem/
+├── main.py                 # CLI entry point
+├── web_app.py             # Web API entry point
+├── mcp_server.py          # MCP server entry point
+├── requirements.txt       # Python dependencies
+├── pyproject.toml         # Modern Python packaging
+├── Dockerfile             # Container configuration
+├── docker-compose.yml     # Multi-service deployment
+├── Makefile              # Development commands
+├── api/                  # FastAPI application
+├── memory/               # Core memory system
+├── clients/              # External service clients
+├── llm/                  # LLM management
+├── scripts/              # Utility scripts
+├── tests/                # Test suite
+└── docs/                 # Documentation
+```
 
 ## How It Works
 
