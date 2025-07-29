@@ -857,12 +857,19 @@ For every user request:
         print("Type '/help' for available commands or 'quit' to exit")
 
         try:
+            first_prompt = True
             while True:
                 try:
                     # Create prompt with vectorstore name
                     vectorstore_name = self.memory_agent.core.VECTORSET_KEY
-                    prompt = f"{colorize(f'({vectorstore_name})', Colors.GRAY)} {colorize('remem>', Colors.BRIGHT_CYAN)} "
-                    user_input = input(f"\n{prompt}").strip()
+                    prompt = f"{colorize(f'({vectorstore_name})', Colors.GRAY)} {colorize('remem>', Colors.CYAN)} "
+
+                    # Add newline before prompt ONLY for first time
+                    if first_prompt:
+                        print()
+                    first_prompt = False
+
+                    user_input = input(prompt).strip()
 
                     if user_input.lower() in ['quit', 'exit', 'bye']:
                         print(f"\n{colorize('Goodbye! 👋', Colors.BRIGHT_GREEN)}")
