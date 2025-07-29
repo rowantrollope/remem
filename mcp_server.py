@@ -11,13 +11,16 @@ The server provides tools for:
 - Getting memory statistics
 - Managing context
 - Advanced memory operations with k-lines
+- LangCache integration for caching tool responses
 """
 
 import os
 import sys
 import json
 import asyncio
+import hashlib
 from typing import Any, Dict, List, Optional
+from functools import wraps
 from dotenv import load_dotenv
 
 # Import MCP SDK
@@ -27,14 +30,34 @@ from mcp.server.fastmcp import FastMCP
 from memory.core_agent import MemoryAgent
 from memory.core import RelevanceConfig
 
+# Import LangCache client
+from clients.langcache_client import LangCacheClient, is_cache_enabled_for_operation
+
 # Load environment variables
 load_dotenv()
 
 # Initialize FastMCP server
 mcp = FastMCP("remem-memory")
 
-# Global memory agent instance
+# Global instances
 memory_agent: Optional[MemoryAgent] = None
+langcache_client: Optional[LangCacheClient] = None
+
+def init_langcache_client() -> bool:
+    """Initialize the LangCache client with proper error handling."""
+    global langcache_client
+    try:
+        # Only initialize if environment variables are set
+        if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
+            langcache_client = LangCacheClient()
+            print("✅ LangCache client initialized", file=sys.stderr)
+            return True
+        else:
+            print("⚠️ LangCache environment variables not set, caching disabled", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"⚠️ Error initializing LangCache client: {e}", file=sys.stderr)
+        return False
 
 def init_memory_agent(vectorstore_name: str = "memories") -> bool:
     """Initialize the memory agent with proper error handling."""
@@ -45,6 +68,53 @@ def init_memory_agent(vectorstore_name: str = "memories") -> bool:
     except Exception as e:
         print(f"Error initializing memory agent: {e}", file=sys.stderr)
         return False
+
+def create_cache_key(func_name: str, **kwargs) -> str:
+    """Create a cache key from function name and arguments."""
+    # Create a deterministic key from function name and sorted arguments
+    args_str = json.dumps(kwargs, sort_keys=True, default=str)
+    key_content = f"{func_name}:{args_str}"
+    return hashlib.md5(key_content.encode()).hexdigest()
+
+def cached_tool(operation_type: str = "mcp_tool"):
+    """Decorator to add LangCache caching to MCP tool functions."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Check if caching is enabled for this operation type
+            if not langcache_client or not is_cache_enabled_for_operation(operation_type):
+                return await func(*args, **kwargs)
+
+            try:
+                # Create cache key
+                cache_key = create_cache_key(func.__name__, **kwargs)
+
+                # Create a simple message format for LangCache
+                messages = [{"role": "user", "content": f"{func.__name__}: {json.dumps(kwargs, default=str)}"}]
+
+                # Try to get from cache
+                cached_response = langcache_client.search_cache(messages)
+                if cached_response:
+                    print(f"🎯 CACHE HIT for {func.__name__}", file=sys.stderr)
+                    return cached_response['content']
+
+                # Call the original function
+                result = await func(*args, **kwargs)
+
+                # Store in cache if we got a result
+                if result and isinstance(result, str):
+                    langcache_client.store_cache(messages, result)
+                    print(f"💾 CACHED result for {func.__name__}", file=sys.stderr)
+
+                return result
+
+            except Exception as e:
+                print(f"⚠️ Cache error for {func.__name__}: {e}", file=sys.stderr)
+                # Fall back to calling the original function
+                return await func(*args, **kwargs)
+
+        return wrapper
+    return decorator
 
 @mcp.tool()
 async def store_memory(
@@ -82,6 +152,7 @@ async def store_memory(
         return f"Error storing memory: {str(e)}"
 
 @mcp.tool()
+@cached_tool(operation_type="memory_search")
 async def search_memories(
     query: str,
     top_k: int = 5,
@@ -171,6 +242,7 @@ async def get_memory_stats(vectorstore_name: str = "memories") -> str:
         return f"Error getting memory stats: {str(e)}"
 
 @mcp.tool()
+@cached_tool(operation_type="question_answering")
 async def answer_question(
     question: str,
     top_k: int = 5,
@@ -368,22 +440,135 @@ async def recall_with_klines(
     except Exception as e:
         return f"Error in k-line recall: {str(e)}"
 
+@mcp.tool()
+async def get_cache_stats(
+) -> str:
+    """Get LangCache statistics and health information.
+
+    Returns:
+        Cache statistics including hit rate, total requests, and health status
+    """
+    if not langcache_client:
+        return "LangCache not initialized. Set LANGCACHE_HOST, LANGCACHE_API_KEY, and LANGCACHE_CACHE_ID environment variables."
+
+    try:
+        # Get cache statistics
+        stats = langcache_client.get_stats()
+
+        # Get health check
+        health = langcache_client.health_check()
+
+        result = {
+            "cache_stats": stats,
+            "health": health,
+            "cache_enabled": True
+        }
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        return f"Error getting cache stats: {str(e)}"
+
+@mcp.tool()
+async def clear_cache_stats(
+) -> str:
+    """Clear LangCache statistics counters.
+
+    Returns:
+        Confirmation message
+    """
+    if not langcache_client:
+        return "LangCache not initialized."
+
+    try:
+        langcache_client.clear_stats()
+        return "Cache statistics cleared successfully."
+
+    except Exception as e:
+        return f"Error clearing cache stats: {str(e)}"
+
+@mcp.tool()
+async def delete_memory(
+    memory_id: str,
+    vectorstore_name: str = "memories"
+) -> str:
+    """Delete a specific memory by its ID.
+
+    Args:
+        memory_id: The UUID of the memory to delete
+        vectorstore_name: Name of the vectorstore to delete from
+
+    Returns:
+        Confirmation message or error
+    """
+    if not memory_agent:
+        return "Memory agent not initialized."
+
+    try:
+        success = memory_agent.delete_memory(memory_id, vectorstore_key=vectorstore_name)
+
+        if success:
+            return f"Successfully deleted memory with ID: {memory_id}"
+        else:
+            return f"Memory with ID {memory_id} not found in vectorstore '{vectorstore_name}'"
+
+    except Exception as e:
+        return f"Error deleting memory: {str(e)}"
+
+@mcp.tool()
+async def clear_all_memories(
+    vectorstore_name: str = "memories",
+    confirm: bool = False
+) -> str:
+    """Clear all memories from a vectorstore.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to clear
+        confirm: Must be set to True to actually perform the deletion (safety measure)
+
+    Returns:
+        Confirmation message or error
+    """
+    if not memory_agent:
+        return "Memory agent not initialized."
+
+    if not confirm:
+        return "⚠️ This will delete ALL memories from the vectorstore. To confirm, call this tool with confirm=True"
+
+    try:
+        result = memory_agent.clear_all_memories(vectorstore_key=vectorstore_name)
+
+        if result.get('success'):
+            memories_deleted = result.get('memories_deleted', 0)
+            return f"✅ Successfully cleared all memories from '{vectorstore_name}'. Deleted {memories_deleted} memories."
+        else:
+            error_msg = result.get('error', 'Unknown error')
+            return f"❌ Failed to clear memories: {error_msg}"
+
+    except Exception as e:
+        return f"Error clearing memories: {str(e)}"
+
 if __name__ == "__main__":
     # Initialize the memory agent
     if not init_memory_agent():
         print("Failed to initialize memory agent", file=sys.stderr)
         sys.exit(1)
 
+    # Initialize LangCache client (optional)
+    init_langcache_client()
+
     print("Remem MCP Server initialized successfully", file=sys.stderr)
     print("Available tools:", file=sys.stderr)
     print("  - store_memory: Store new memories with contextual grounding", file=sys.stderr)
-    print("  - search_memories: Search memories using vector similarity", file=sys.stderr)
+    print("  - search_memories: Search memories using vector similarity (cached)", file=sys.stderr)
     print("  - get_memory_stats: Get memory system statistics", file=sys.stderr)
-    print("  - answer_question: Answer questions using memory with confidence scoring", file=sys.stderr)
+    print("  - answer_question: Answer questions using memory with confidence scoring (cached)", file=sys.stderr)
     print("  - extract_and_store_memories: Extract memories from conversations", file=sys.stderr)
     print("  - set_context: Set contextual information for grounding", file=sys.stderr)
     print("  - get_context: Get current contextual information", file=sys.stderr)
     print("  - recall_with_klines: Advanced memory recall with k-line reasoning", file=sys.stderr)
+    print("  - get_cache_stats: Get LangCache statistics and health information", file=sys.stderr)
+    print("  - clear_cache_stats: Clear LangCache statistics counters", file=sys.stderr)
 
     # Run the MCP server
     mcp.run(transport='stdio')

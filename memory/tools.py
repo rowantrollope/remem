@@ -330,6 +330,53 @@ def find_duplicate_memories(similarity_threshold: float = 0.9) -> str:
     except Exception as e:
         return f"Error finding duplicates: {str(e)}"
 
+@tool
+def delete_memory(memory_id: str) -> str:
+    """Delete a specific memory by its ID.
+
+    Args:
+        memory_id: The UUID of the memory to delete
+
+    Returns:
+        Success message or error message
+    """
+    if not _memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        success = _memory_agent.delete_memory(memory_id)
+
+        if success:
+            return f"Successfully deleted memory with ID: {memory_id}"
+        else:
+            return f"Memory with ID {memory_id} not found or could not be deleted"
+    except Exception as e:
+        return f"Error deleting memory: {str(e)}"
+
+@tool
+def clear_all_memories() -> str:
+    """Clear all stored memories from the current vectorstore.
+
+    This will permanently delete ALL memories. Use with caution.
+
+    Returns:
+        Success message with deletion count or error message
+    """
+    if not _memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        result = _memory_agent.clear_all_memories()
+
+        if result.get('success'):
+            memories_deleted = result.get('memories_deleted', 0)
+            return f"Successfully cleared all memories. Deleted {memories_deleted} memories."
+        else:
+            error_msg = result.get('error', 'Unknown error')
+            return f"Failed to clear memories: {error_msg}"
+    except Exception as e:
+        return f"Error clearing memories: {str(e)}"
+
 # List of available memory tools
 AVAILABLE_TOOLS = [
     store_memory,
@@ -340,5 +387,7 @@ AVAILABLE_TOOLS = [
     answer_with_confidence,
     format_memory_results,
     extract_and_store_memories,
-    find_duplicate_memories
+    find_duplicate_memories,
+    delete_memory,
+    clear_all_memories
 ]

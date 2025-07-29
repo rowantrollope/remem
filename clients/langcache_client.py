@@ -189,7 +189,7 @@ class LangCacheClient:
             # DEBUG: Print the response details
             try:
                 response_json = response.json()
-                print(f"🔍 LANGCACHE SEARCH RESPONSE JSON: {json.dumps(response_json, indent=2)}")
+                # print(f"🔍 LANGCACHE SEARCH RESPONSE JSON: {json.dumps(response_json, indent=2)}")
             except:
                 print(f"🔍 LANGCACHE SEARCH RESPONSE TEXT: {response.text}")
             
