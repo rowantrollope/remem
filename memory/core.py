@@ -20,6 +20,12 @@ from dotenv import load_dotenv
 import redis
 import openai
 
+# Import debug utilities
+from .debug_utils import (
+    debug_print, verbose_print, memory_search_print, memory_result_print,
+    is_debug_enabled, success_print, error_print, warning_print
+)
+
 # Load environment variables
 load_dotenv()
 
@@ -105,11 +111,12 @@ class MemoryCore:
         redis_port = redis_port or int(os.getenv("REDIS_PORT", "6379"))
         redis_db = redis_db or int(os.getenv("REDIS_DB", "0"))
 
-        # Debug logging
-        print(f"🔍 MEMORY: Redis connection details:")
-        print(f"  Host: {redis_host}")
-        print(f"  Port: {redis_port} (from param: {redis_port}, from env: {os.getenv('REDIS_PORT', 'not set')})")
-        print(f"  DB: {redis_db}")
+        # Debug logging (only in verbose mode)
+        if os.getenv("MEMORY_DEBUG", "false").lower() == "true":
+            print(f"🔍 MEMORY: Redis connection details:")
+            print(f"  Host: {redis_host}")
+            print(f"  Port: {redis_port} (from param: {redis_port}, from env: {os.getenv('REDIS_PORT', 'not set')})")
+            print(f"  DB: {redis_db}")
 
         # Initialize OpenAI client
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -119,11 +126,13 @@ class MemoryCore:
         try:
             if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
                 self.langcache_client = LangCacheClient()
-                print("✅ LangCache enabled for memory core")
-            else:
+                if os.getenv("MEMORY_DEBUG", "false").lower() == "true":
+                    print("✅ LangCache enabled for memory core")
+            elif os.getenv("MEMORY_DEBUG", "false").lower() == "true":
                 print("ℹ️ LangCache not configured for memory core (missing environment variables)")
         except Exception as e:
-            print(f"⚠️ Failed to initialize LangCache for memory core: {e}")
+            if os.getenv("MEMORY_DEBUG", "false").lower() == "true":
+                print(f"⚠️ Failed to initialize LangCache for memory core: {e}")
 
         # Initialize Redis connection
         try:
@@ -135,7 +144,8 @@ class MemoryCore:
             )
             # Test connection
             self.redis_client.ping()
-            print(f"✅ MEMORY: Connected to Redis at {redis_host}:{redis_port}")
+            if os.getenv("MEMORY_DEBUG", "false").lower() == "true":
+                print(f"✅ MEMORY: Connected to Redis at {redis_host}:{redis_port}")
         except redis.ConnectionError as e:
             print(f"❌ MEMORY: Failed to connect to Redis: {e}")
             print("Make sure Redis is running and accessible.")
@@ -401,9 +411,19 @@ Respond with a JSON object listing the detected references:
 If no context-dependent references are found, return empty arrays for all categories."""
 
         try:
-            # Use Tier 1 LLM for context analysis
-            llm_manager = get_llm_manager()
-            tier1_client = llm_manager.get_tier1_client()
+            # Try to use Tier 1 LLM for context analysis if available
+            try:
+                llm_manager = get_llm_manager()
+                tier1_client = llm_manager.get_tier1_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), skip context analysis
+                print(f"⚠️ Context analysis skipped: LLM manager not initialized")
+                return {
+                    "context_type": "unknown",
+                    "dependencies": [],
+                    "analysis_applied": False,
+                    "error": "LLM manager not initialized"
+                }
 
             # Wrap with LangCache if available
             if self.langcache_client:
@@ -514,9 +534,20 @@ Respond with a JSON object:
 }}"""
 
         try:
-            # Use Tier 1 LLM for memory grounding
-            llm_manager = get_llm_manager()
-            tier1_client = llm_manager.get_tier1_client()
+            # Try to use Tier 1 LLM for memory grounding if available
+            try:
+                llm_manager = get_llm_manager()
+                tier1_client = llm_manager.get_tier1_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), skip grounding
+                print(f"⚠️ Memory grounding skipped: LLM manager not initialized")
+                return {
+                    "original_text": memory_text,
+                    "grounded_text": memory_text,
+                    "grounding_applied": False,
+                    "dependencies_resolved": dependencies,
+                    "error": "LLM manager not initialized"
+                }
 
             # Wrap with LangCache if available
             if self.langcache_client:
@@ -704,17 +735,19 @@ Respond with a JSON object:
         try:
             # VSIM vectorsetname VALUES LENGTH value1 value2 ... valueN [WITHSCORES] [COUNT count] [FILTER expression]
             vectorset_to_use = vectorset_key or self.VECTORSET_KEY
-            print(f"🔍 {vectorset_to_use}: Searching memories: {query} (top_k: {top_k}, min_similarity: {min_similarity})")
+
+            # Use formatted debug output
+            memory_search_print(vectorset_to_use, query, top_k, min_similarity)
+
             cmd = ["VSIM", vectorset_to_use, "VALUES", str(self.EMBEDDING_DIM)] + query_vector_values + ["WITHSCORES", "COUNT", str(top_k)]
 
             # Add user-provided filter if specified
             if filterBy:
                 cmd.extend(["FILTER", filterBy])
-                print(f"🔍 Using Redis filter: {filterBy}")
+                debug_print(f"Using Redis filter: {filterBy}", "FILTER")
 
             result = self.redis_client.execute_command(*cmd)
 
-            print(f"🔍 Redis search result: {result}")
             # Parse results - VSIM returns [element1, score1, element2, score2, ...]
             memories = []
             for i in range(0, len(result), 2):
@@ -797,31 +830,29 @@ Respond with a JSON object:
 
             if min_similarity > 0.0:
                 original_count = len(memories)
-                print(f"🔍 Applying similarity threshold filter (min_similarity: {min_similarity}):")
+                debug_print(f"Applying similarity threshold filter (min_similarity: {min_similarity})", "FILTER")
 
                 for i, memory in enumerate(memories, 1):
                     score = memory.get("score", 0)
                     memory_text = memory.get("text", "")[:60] + ("..." if len(memory.get("text", "")) > 60 else "")
 
                     if score >= min_similarity:
-                        print(f"   ✅ INCLUDED #{i}: Score: {score:.3f} - '{memory_text}'")
+                        debug_print(f"INCLUDED #{i}: Score: {score:.3f} - '{memory_text}'", "✅")
                         included_memories.append(memory)
                     else:
-                        print(f"   ❌ EXCLUDED #{i}: Score: {score:.3f} - '{memory_text}' (below {min_similarity})")
+                        debug_print(f"EXCLUDED #{i}: Score: {score:.3f} - '{memory_text}' (below {min_similarity})", "❌")
                         excluded_memories.append(memory)
 
                 memories = included_memories
                 filtered_count = len(memories)
-                print(f"🔍 Similarity filtering result: {original_count} → {filtered_count} memories")
+                memory_result_print(filtered_count, len(excluded_memories), min_similarity)
             else:
-                print(f"🔍 Similarity filtering: No memories removed (min_similarity: {min_similarity})")
+                debug_print(f"Similarity filtering: No memories removed (min_similarity: {min_similarity})", "FILTER")
                 included_memories = memories
                 excluded_memories = []
 
             # Sort by relevance score (highest first)
             memories.sort(key=lambda m: m.get("relevance_score", m.get("score", 0)), reverse=True)
-
-            print(f"Found {len(memories)} memories for query '{query}'")
 
             # Return memories with filtering information
             return {

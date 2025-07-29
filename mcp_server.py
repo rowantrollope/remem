@@ -17,9 +17,8 @@ The server provides tools for:
 import os
 import sys
 import json
-import asyncio
 import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Optional
 from functools import wraps
 from dotenv import load_dotenv
 
@@ -28,7 +27,6 @@ from mcp.server.fastmcp import FastMCP
 
 # Import remem memory system
 from memory.core_agent import MemoryAgent
-from memory.core import RelevanceConfig
 
 # Import LangCache client
 from clients.langcache_client import LangCacheClient, is_cache_enabled_for_operation
@@ -59,7 +57,7 @@ def init_langcache_client() -> bool:
         print(f"⚠️ Error initializing LangCache client: {e}", file=sys.stderr)
         return False
 
-def init_memory_agent(vectorstore_name: str = "memories") -> bool:
+def init_memory_agent(vectorstore_name: str = "augment:remem") -> bool:
     """Initialize the memory agent with proper error handling."""
     global memory_agent
     try:
@@ -120,7 +118,7 @@ def cached_tool(operation_type: str = "mcp_tool"):
 async def store_memory(
     text: str,
     memory_type: str = "neme",
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     apply_grounding: bool = True
 ) -> str:
     """Store a new memory (neme) in the memory system.
@@ -156,7 +154,7 @@ async def store_memory(
 async def search_memories(
     query: str,
     top_k: int = 5,
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     memory_type: str = "neme",
     min_similarity: float = 0.7
 ) -> str:
@@ -205,7 +203,7 @@ async def search_memories(
         return f"Error searching memories: {str(e)}"
 
 @mcp.tool()
-async def get_memory_stats(vectorstore_name: str = "memories") -> str:
+async def get_memory_stats(vectorstore_name: str = "augment:remem") -> str:
     """Get statistics about the memory system.
     
     Args:
@@ -246,7 +244,7 @@ async def get_memory_stats(vectorstore_name: str = "memories") -> str:
 async def answer_question(
     question: str,
     top_k: int = 5,
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     confidence_threshold: float = 0.7
 ) -> str:
     """Answer a question using the memory system with confidence scoring.
@@ -285,7 +283,7 @@ async def answer_question(
 @mcp.tool()
 async def extract_and_store_memories(
     conversation_text: str,
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     apply_grounding: bool = True
 ) -> str:
     """Extract and store memories from a conversation or text.
@@ -326,7 +324,7 @@ async def set_context(
     activity: str = "",
     people_present: str = "",
     environment: str = "",
-    vectorstore_name: str = "memories"
+    vectorstore_name: str = "augment:remem"
 ) -> str:
     """Set contextual information for memory grounding.
 
@@ -369,7 +367,7 @@ async def set_context(
         return f"Error setting context: {str(e)}"
 
 @mcp.tool()
-async def get_context(vectorstore_name: str = "memories") -> str:
+async def get_context(vectorstore_name: str = "augment:remem") -> str:
     """Get current contextual information.
 
     Args:
@@ -409,7 +407,7 @@ async def get_context(vectorstore_name: str = "memories") -> str:
 async def recall_with_klines(
     query: str,
     top_k: int = 5,
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     use_advanced_filtering: bool = True
 ) -> str:
     """Advanced memory recall using k-lines for sophisticated reasoning.
@@ -490,7 +488,7 @@ async def clear_cache_stats(
 @mcp.tool()
 async def delete_memory(
     memory_id: str,
-    vectorstore_name: str = "memories"
+    vectorstore_name: str = "augment:remem"
 ) -> str:
     """Delete a specific memory by its ID.
 
@@ -517,7 +515,7 @@ async def delete_memory(
 
 @mcp.tool()
 async def clear_all_memories(
-    vectorstore_name: str = "memories",
+    vectorstore_name: str = "augment:remem",
     confirm: bool = False
 ) -> str:
     """Clear all memories from a vectorstore.

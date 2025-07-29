@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Import debug utilities
+from .debug_utils import debug_print, warning_print, error_print, success_print, is_debug_enabled
+
 # Import LLM manager and LangCache
 sys.path.append('..')
 from llm.llm_manager import get_llm_manager
@@ -39,11 +42,11 @@ class MemoryExtraction:
         try:
             if all([os.getenv("LANGCACHE_HOST"), os.getenv("LANGCACHE_API_KEY"), os.getenv("LANGCACHE_CACHE_ID")]):
                 self.langcache_client = LangCacheClient()
-                print("✅ LangCache enabled for memory extraction")
+                debug_print("LangCache enabled for memory extraction", "CACHE")
             else:
-                print("ℹ️ LangCache not configured for memory extraction (missing environment variables)")
+                debug_print("LangCache not configured for memory extraction (missing environment variables)", "CACHE")
         except Exception as e:
-            print(f"⚠️ Failed to initialize LangCache for memory extraction: {e}")
+            warning_print(f"Failed to initialize LangCache for memory extraction: {e}")
 
     def extract_and_store_memories(self,
                                  raw_input: str,
@@ -67,15 +70,16 @@ class MemoryExtraction:
             - total_extracted: Number of memories extracted
             - total_filtered: Number of potential memories filtered out
         """
-        print(f"🔍 Extracting memories from conversational input ({len(raw_input)} characters)")
-        print(f"📋 Context: {context_prompt[:100]}...")
+        debug_print(f"Extracting memories from conversational input ({len(raw_input)} characters)", "EXTRACT")
+        debug_print(f"Context: {context_prompt[:100]}...", "CONTEXT")
         if existing_memories:
-            print(f"📚 EXISTING MEMORIES PROVIDED: {len(existing_memories)} memories")
-            for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
-                mem_text = mem.get('text', mem.get('final_text', ''))
-                print(f"   {i}. {mem_text[:60]}...")
+            debug_print(f"EXISTING MEMORIES PROVIDED: {len(existing_memories)} memories", "MEMORY")
+            if is_debug_enabled():
+                for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
+                    mem_text = mem.get('text', mem.get('final_text', ''))
+                    debug_print(f"{i}. {mem_text[:60]}...", "📝")
         else:
-            print("📚 NO EXISTING MEMORIES PROVIDED")
+            debug_print("NO EXISTING MEMORIES PROVIDED", "MEMORY")
 
         # Build extraction prompt with existing memories context
         extraction_prompt = self._build_extraction_prompt(
@@ -128,7 +132,7 @@ class MemoryExtraction:
 
             except Exception as e:
                 error_msg = f"Failed to store memory '{fact['text'][:50]}...': {str(e)}"
-                print(f"❌ {error_msg}")
+                error_print(error_msg)
                 extraction_errors.append(error_msg)
 
         # Prepare summary
@@ -327,9 +331,9 @@ Be selective and focus only on information that would improve future assistance.
 
         # Debug: Show if existing memories section was included
         if existing_memories and len(existing_memories) > 0:
-            print(f"✅ PROMPT: Including {len(existing_memories)} existing memories in extraction prompt")
+            debug_print(f"Including {len(existing_memories)} existing memories in extraction prompt", "PROMPT")
         else:
-            print("⚠️ PROMPT: No existing memories included in extraction prompt")
+            debug_print("No existing memories included in extraction prompt", "PROMPT")
 
         return prompt
 
@@ -357,7 +361,7 @@ Be selective and focus only on information that would improve future assistance.
             elif isinstance(search_result, list):
                 similar_memories = search_result
             else:
-                print(f"⚠️ MEMORY: Unexpected search result format: {type(search_result)}")
+                warning_print(f"Unexpected search result format: {type(search_result)}")
                 return False
 
             if not similar_memories:
@@ -366,7 +370,7 @@ Be selective and focus only on information that would improve future assistance.
             # Check for very high similarity matches
             for memory in similar_memories:
                 if not isinstance(memory, dict):
-                    print(f"⚠️ MEMORY: Unexpected memory format: {type(memory)}")
+                    warning_print(f"Unexpected memory format: {type(memory)}")
                     continue
 
                 memory_score = memory.get('score', 0)
@@ -377,7 +381,7 @@ Be selective and focus only on information that would improve future assistance.
 
                     # Check for exact match or very similar content
                     if existing_text == new_text:
-                        print(f"🔄 DUPLICATE: Exact match - '{memory_text[:50]}...'")
+                        debug_print(f"DUPLICATE: Exact match - '{memory_text[:50]}...'", "🔄")
                         return True
 
                     # Check for substantial overlap (>70% of words in common for more aggressive detection)
@@ -390,20 +394,21 @@ Be selective and focus only on information that would improve future assistance.
 
                         # More aggressive duplicate detection
                         if overlap_ratio > 0.7:
-                            print(f"🔄 DUPLICATE: {overlap_ratio:.2f} overlap - '{memory_text[:50]}...' vs '{existing_text[:50]}...'")
+                            debug_print(f"DUPLICATE: {overlap_ratio:.2f} overlap - '{memory_text[:50]}...' vs '{existing_text[:50]}...'", "🔄")
                             return True
 
                         # Also check for semantic similarity in key phrases
                         if self._has_semantic_overlap(existing_text, new_text):
-                            print(f"🔄 DUPLICATE: Semantic similarity - '{memory_text[:50]}...' vs '{existing_text[:50]}...'")
+                            debug_print(f"DUPLICATE: Semantic similarity - '{memory_text[:50]}...' vs '{existing_text[:50]}...'", "🔄")
                             return True
 
             return False
 
         except Exception as e:
-            print(f"⚠️ MEMORY: Duplicate check failed: {e}")
-            import traceback
-            traceback.print_exc()
+            warning_print(f"Duplicate check failed: {e}")
+            if is_debug_enabled():
+                import traceback
+                traceback.print_exc()
             return False  # If check fails, allow storage to be safe
 
     def _has_semantic_overlap(self, text1: str, text2: str) -> bool:
@@ -455,7 +460,7 @@ Be selective and focus only on information that would improve future assistance.
             return False
 
         except Exception as e:
-            print(f"⚠️ MEMORY: Semantic overlap check failed: {e}")
+            warning_print(f"Semantic overlap check failed: {e}")
             return False
 
     def _extract_memories_with_llm(self, extraction_prompt: str) -> Optional[Dict[str, Any]]:
@@ -468,9 +473,14 @@ Be selective and focus only on information that would improve future assistance.
             Dictionary with extracted facts and filtering information, or None if failed
         """
         try:
-            # Use Tier 1 LLM for memory extraction (better performance)
-            llm_manager = get_llm_manager()
-            tier1_client = llm_manager.get_tier1_client()
+            # Try to use Tier 1 LLM for memory extraction if available
+            try:
+                llm_manager = get_llm_manager()
+                tier1_client = llm_manager.get_tier1_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), skip extraction
+                error_print("Memory extraction skipped: LLM manager not initialized")
+                return None
 
             # Wrap with LangCache if available
             if self.langcache_client:
@@ -494,7 +504,7 @@ Be selective and focus only on information that would improve future assistance.
                 )
 
             extraction_result = response['content'].strip()
-            print(f"🔍 LLM extraction response received ({len(extraction_result)} characters)")
+            debug_print(f"LLM extraction response received ({len(extraction_result)} characters)", "LLM")
 
             # Parse JSON response
             try:
@@ -502,7 +512,7 @@ Be selective and focus only on information that would improve future assistance.
 
                 # Validate the response structure
                 if not isinstance(extraction_data, dict):
-                    print("⚠️ LLM response is not a valid JSON object")
+                    warning_print("LLM response is not a valid JSON object")
                     return None
 
                 extracted_facts = extraction_data.get("extracted_facts", [])
@@ -522,9 +532,9 @@ Be selective and focus only on information that would improve future assistance.
                         }
                         valid_facts.append(valid_fact)
                     else:
-                        print(f"⚠️ Skipping invalid fact structure: {fact}")
+                        warning_print(f"Skipping invalid fact structure: {fact}")
 
-                print(f"✅ Extracted {len(valid_facts)} valid facts, filtered {len(filtered_out)} items")
+                success_print(f"Extracted {len(valid_facts)} valid facts, filtered {len(filtered_out)} items")
 
                 return {
                     "extracted_facts": valid_facts,
@@ -533,10 +543,10 @@ Be selective and focus only on information that would improve future assistance.
                 }
 
             except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse LLM extraction response as JSON: {e}")
-                print(f"Raw response: {extraction_result[:500]}...")
+                error_print(f"Failed to parse LLM extraction response as JSON: {e}")
+                debug_print(f"Raw response: {extraction_result[:500]}...", "RAW")
                 return None
 
         except Exception as e:
-            print(f"❌ Error during LLM memory extraction: {e}")
+            error_print(f"Error during LLM memory extraction: {e}")
             return None

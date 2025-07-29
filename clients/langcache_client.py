@@ -401,7 +401,6 @@ class CachedLLMClient:
         # Check if caching is enabled for this operation type
         if not is_cache_enabled_for_operation(operation_type):
             # Caching disabled for this operation, call LLM directly
-            print(f"🚫 LANGCACHE DISABLED: Caching disabled for operation type '{operation_type}'")
             response = self.llm_client.chat_completion(
                 messages=messages,
                 temperature=temperature,

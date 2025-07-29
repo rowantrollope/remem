@@ -13,7 +13,7 @@ app_config: Dict[str, Any] = {
         "host": os.getenv("REDIS_HOST", "localhost"),
         "port": int(os.getenv("REDIS_PORT", "6379")),
         "db": int(os.getenv("REDIS_DB", "0")),
-        "vectorset_key": "memories"
+        "vectorset_key": "augment:remem"
     },
     "llm": {
         "tier1": {

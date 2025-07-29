@@ -77,9 +77,19 @@ Response format:
 Be inclusive about what qualifies as a memory question - if it could be asking about stored personal information, treat it as SEARCH."""
 
         try:
-            # Use Tier 2 LLM for input validation
-            llm_manager = get_llm_manager()
-            tier2_client = llm_manager.get_tier2_client()
+            # Try to use Tier 2 LLM for input validation if available
+            try:
+                llm_manager = get_llm_manager()
+                tier2_client = llm_manager.get_tier2_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), skip validation optimization
+                print(f"⚠️ Query validation skipped: LLM manager not initialized, using original input")
+                embedding_query = self.optimize_query_for_embedding_search(user_input, user_input)
+                return {
+                    "type": "search",
+                    "content": user_input,
+                    "embedding_query": embedding_query
+                }
 
             # Wrap with LangCache if available
             if self.langcache_client:
@@ -180,9 +190,14 @@ EXAMPLES:
 Your response should be ONLY the optimized search query (no explanations, no quotes, just the query):"""
 
         try:
-            # Use Tier 2 LLM for query optimization
-            llm_manager = get_llm_manager()
-            tier2_client = llm_manager.get_tier2_client()
+            # Try to use Tier 2 LLM for query optimization if available
+            try:
+                llm_manager = get_llm_manager()
+                tier2_client = llm_manager.get_tier2_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), skip optimization
+                print(f"⚠️ Embedding optimization skipped: LLM manager not initialized, using processed question")
+                return processed_question
 
             # Wrap with LangCache if available
             if self.langcache_client:

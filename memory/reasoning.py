@@ -144,9 +144,19 @@ Available user memories (may contain both relevant and irrelevant entries):
 Please evaluate each memory for relevance to the current question. Use ONLY the relevant memories to provide a helpful, personalized answer. Ignore any memories that don't relate to the user's current question. Consider the user's preferences, constraints, family situation, past experiences, and other personal context from the relevant memories when formulating your response. If the relevant memories don't contain sufficient information for a complete answer, explain what additional information would be helpful and provide what guidance you can based on what you know about the user."""
 
         try:
-            # Use Tier 1 LLM for main question answering
-            llm_manager = get_llm_manager()
-            tier1_client = llm_manager.get_tier1_client()
+            # Try to use Tier 1 LLM for main question answering if available
+            try:
+                llm_manager = get_llm_manager()
+                tier1_client = llm_manager.get_tier1_client()
+            except RuntimeError:
+                # LLM manager not initialized (CLI/MCP context), fallback to basic response
+                print(f"⚠️ Question answering skipped: LLM manager not initialized")
+                return {
+                    "type": "answer",
+                    "answer": "I'm sorry, but I cannot provide an AI-powered answer because the LLM manager is not initialized. However, I found some relevant memories that might help.",
+                    "confidence": "low",
+                    "supporting_memories": [{"text": mem["text"], "similarity": mem.get("similarity", 0.0)} for mem in relevant_memories[:3]]
+                }
 
             response = tier1_client.chat_completion(
                 messages=[

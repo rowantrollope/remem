@@ -17,9 +17,14 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 
 from .core_agent import MemoryAgent
 from .tools import AVAILABLE_TOOLS, set_memory_agent
+from .debug_utils import (
+    debug_print, memory_extraction_print, format_user_response,
+    is_debug_enabled, section_header, colorize, Colors, error_print, success_print, info_print
+)
 
 # Load environment variables
 load_dotenv()
+
 
 
 class LangGraphMemoryAgent:
@@ -361,20 +366,22 @@ For every user request:
             conversation_text = self._format_conversation_for_extraction(recent_messages)
 
             # STEP 1: Search for existing relevant memories first
-            print("🔍 MEMORY: Searching for existing relevant memories...")
+            debug_print("Searching for existing relevant memories...", "MEMORY")
+
             existing_memories = self.memory_agent.search_memories(
                 conversation_text,
                 top_k=5,
                 min_similarity=0.8  # Higher threshold to be more selective
             )
 
-            if existing_memories:
-                print(f"📚 MEMORY: Found {len(existing_memories)} existing relevant memories")
-                for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
-                    mem_text = mem.get('text', mem.get('final_text', ''))
-                    print(f"   📝 {i}. {mem_text}")
-            else:
-                print("📚 MEMORY: No existing relevant memories found")
+            if is_debug_enabled():
+                if existing_memories:
+                    debug_print(f"Found {len(existing_memories)} existing relevant memories", "MEMORY")
+                    for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
+                        mem_text = mem.get('text', mem.get('final_text', ''))
+                        debug_print(f"{i}. {mem_text}", "📝")
+                else:
+                    debug_print("No existing relevant memories found", "MEMORY")
 
             # STEP 2: Extract memories (LLM will determine if anything is worth extracting)
             result = self.memory_agent.extract_and_store_memories(
@@ -384,10 +391,7 @@ For every user request:
                 existing_memories=existing_memories  # Pass existing memories for context
             )
 
-            if result["total_extracted"] > 0:
-                print(f"🧠 MEMORY: Auto-extracted {result['total_extracted']} NEW memories from conversation")
-            else:
-                print("🔍 MEMORY: No new memories extracted - information already captured or not valuable")
+            memory_extraction_print(result["total_extracted"], "conversation")
 
             # Clear processed messages from buffer (keep last 2 for context)
             self.conversation_buffer = self.conversation_buffer[-2:]
@@ -726,27 +730,182 @@ For every user request:
         # This preserves the confidence scoring and structured JSON responses
         return self.memory_agent.answer_question(question, top_k=top_k, filterBy=filterBy, vectorset_key=vectorset_key)
     
+    def show_help(self):
+        """Display help information for the memory agent."""
+        help_text = f"""
+{colorize('🧠 LangGraph Remem CLI - Help', Colors.BRIGHT_CYAN)}
+{colorize('=' * 50, Colors.GRAY)}
+
+{colorize('BASIC USAGE:', Colors.BRIGHT_YELLOW)}
+  • Ask questions about your preferences and stored information
+  • Store new information by mentioning it in conversation
+  • The agent automatically extracts and remembers important details
+
+{colorize('EXAMPLE CONVERSATIONS:', Colors.BRIGHT_YELLOW)}
+  {colorize('remem>', Colors.CYAN)} "Remember that I prefer 4-space indentation"
+  {colorize('remem>', Colors.CYAN)} "What coding style do I prefer?"
+  {colorize('remem>', Colors.CYAN)} "I like window seats when flying"
+  {colorize('remem>', Colors.CYAN)} "What are my travel preferences?"
+
+{colorize('SPECIAL COMMANDS:', Colors.BRIGHT_YELLOW)}
+  {colorize('/help', Colors.WHITE)}       - Show this help message
+  {colorize('/profile', Colors.WHITE)}    - Show your complete user profile summary
+  {colorize('/stats', Colors.WHITE)}      - Show memory system statistics
+  {colorize('/vectorset', Colors.WHITE)} - Switch to a different vectorstore
+  {colorize('/clear', Colors.WHITE)}      - Clear conversation history
+  {colorize('/debug', Colors.WHITE)}      - Toggle debug mode on/off
+  {colorize('quit', Colors.WHITE)}        - Exit the program (or Ctrl+C)
+
+{colorize('MEMORY FEATURES:', Colors.BRIGHT_YELLOW)}
+  • {colorize('Smart Extraction:', Colors.GREEN)} Automatically identifies important information
+  • {colorize('Contextual Search:', Colors.GREEN)} Finds relevant memories for your questions
+  • {colorize('Duplicate Prevention:', Colors.GREEN)} Avoids storing redundant information
+  • {colorize('Confidence Scoring:', Colors.GREEN)} Provides confidence levels for answers
+
+{colorize('ENVIRONMENT VARIABLES:', Colors.BRIGHT_YELLOW)}
+  {colorize('MEMORY_DEBUG=true', Colors.WHITE)}   - Enable detailed debug output
+  {colorize('MEMORY_VERBOSE=true', Colors.WHITE)} - Enable verbose logging
+
+{colorize('TIPS:', Colors.BRIGHT_YELLOW)}
+  • Be specific when storing preferences (e.g., "I prefer 4-space tabs" vs "I like tabs")
+  • Ask follow-up questions to get more detailed information
+  • Use natural language - the agent understands conversational input
+  • The agent learns from your conversations and improves over time
+
+{colorize('=' * 50, Colors.GRAY)}
+"""
+        print(help_text)
+
+    def show_stats(self):
+        """Show memory system statistics."""
+        try:
+            info = self.memory_agent.get_memory_info()
+
+            section_header("Remem Statistics")
+
+            if 'error' in info:
+                error_print(f"Error getting stats: {info['error']}")
+                return
+
+            print(f"Vectorstore: {colorize(info['vectorset_name'], Colors.BRIGHT_CYAN)}")
+            print(f"Total Memories: {colorize(str(info['memory_count']), Colors.BRIGHT_GREEN)}")
+            print(f"Vector Dimension: {colorize(str(info['vector_dimension']), Colors.BRIGHT_BLUE)}")
+            print(f"Embedding Model: {colorize(info['embedding_model'], Colors.WHITE)}")
+            redis_info = f"{info['redis_host']}:{info['redis_port']}"
+            print(f"Redis: {colorize(redis_info, Colors.GRAY)}")
+            print(f"Last Updated: {colorize(info['timestamp'][:19], Colors.GRAY)}")
+
+            if 'note' in info:
+                print(f"ℹ️  Note: {info['note']}")
+
+        except Exception as e:
+            error_print(f"Failed to get memory statistics: {e}")
+
+    def toggle_debug(self):
+        """Toggle debug mode on/off."""
+        import os
+        current_debug = os.getenv("MEMORY_DEBUG", "false").lower() == "true"
+        new_debug = not current_debug
+
+        # Set environment variable for current session
+        os.environ["MEMORY_DEBUG"] = "true" if new_debug else "false"
+
+        if new_debug:
+            success_print("Debug mode enabled - you'll see detailed operation logs")
+        else:
+            success_print("Debug mode disabled - output will be clean and minimal")
+
+    def switch_vectorstore(self):
+        """Switch to a different vectorstore."""
+        try:
+            # Import the vectorstore selection function
+            import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+            from main import get_vectorstore_name
+
+            print(f"\n{colorize('Current vectorstore:', Colors.BRIGHT_CYAN)} {self.memory_agent.core.VECTORSET_KEY}")
+            print("Select a new vectorstore:")
+
+            # Get new vectorstore name
+            new_vectorstore = get_vectorstore_name()
+
+            if new_vectorstore == self.memory_agent.core.VECTORSET_KEY:
+                info_print("Already using that vectorstore - no change needed")
+                return
+
+            # Create new memory agent with the selected vectorstore
+            old_vectorstore = self.memory_agent.core.VECTORSET_KEY
+            self.memory_agent = MemoryAgent(vectorset_key=new_vectorstore)
+
+            # Update the global memory agent for tools
+            set_memory_agent(self.memory_agent)
+
+            # Clear conversation history since we're switching context
+            self.clear_conversation_history()
+
+            success_print(f"Switched from '{old_vectorstore}' to '{new_vectorstore}'")
+            info_print("Conversation history cleared for new context")
+
+        except Exception as e:
+            error_print(f"Failed to switch vectorstore: {e}")
+            print("Continuing with current vectorstore.")
+
     def chat(self):
         """Start an interactive chat session."""
-        print("LangGraph Memory Agent Chat (type 'quit' to exit)")
-        print("-" * 50)
-        
-        while True:
-            user_input = input("\nYou: ").strip()
-            
-            if user_input.lower() in ['quit', 'exit', 'bye']:
-                print("Goodbye!")
-                break
-            
-            if not user_input:
-                continue
-            
-            try:
-                response = self.run(user_input)
-                print(f"\nAgent: {response}")
-            except Exception as e:
-                print(f"\nError: {e}")
-                print("Please try again.")
+        section_header("LangGraph Memory Agent Chat")
+        print("Type '/help' for available commands or 'quit' to exit")
+
+        try:
+            while True:
+                try:
+                    # Create prompt with vectorstore name
+                    vectorstore_name = self.memory_agent.core.VECTORSET_KEY
+                    prompt = f"{colorize(f'({vectorstore_name})', Colors.GRAY)} {colorize('remem>', Colors.BRIGHT_CYAN)} "
+                    user_input = input(f"\n{prompt}").strip()
+
+                    if user_input.lower() in ['quit', 'exit', 'bye']:
+                        print(f"\n{colorize('Goodbye! 👋', Colors.BRIGHT_GREEN)}")
+                        break
+
+                    if not user_input:
+                        continue
+
+                    # Handle special commands with / prefix (also accept without / for backward compatibility)
+                    if user_input.lower() in ['/help', 'help']:
+                        self.show_help()
+                        continue
+                    elif user_input.lower() in ['/profile', 'profile']:
+                        profile = self.get_user_profile_summary()
+                        print(f"\n{profile}")
+                        continue
+                    elif user_input.lower() in ['/stats', 'stats']:
+                        self.show_stats()
+                        continue
+                    elif user_input.lower() in ['/vectorset', 'vectorstore']:
+                        self.switch_vectorstore()
+                        continue
+                    elif user_input.lower() in ['/clear', 'clear']:
+                        self.clear_conversation_history()
+                        success_print("Conversation history cleared")
+                        continue
+                    elif user_input.lower() in ['/debug', 'debug']:
+                        self.toggle_debug()
+                        continue
+
+                    # Regular conversation
+                    response = self.run(user_input)
+                    formatted_response = format_user_response(response)
+                    print(formatted_response)
+
+                except KeyboardInterrupt:
+                    print(f"\n\n{colorize('Goodbye! 👋', Colors.BRIGHT_GREEN)}")
+                    break
+                except Exception as e:
+                    error_print(f"Error: {e}")
+                    print("Please try again.")
+        finally:
+            pass
 
 
 if __name__ == "__main__":
