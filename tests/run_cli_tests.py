@@ -204,9 +204,9 @@ Prerequisites:
         print("\n🎉 All test suites passed!")
         print("\nThe CLI is working correctly and ready for use.")
         print("\nNext steps:")
-        print("- Try the CLI: python main.py")
-        print("- Read the help: python main.py help")
-        print("- Start a conversation: python main.py 'Hello!'")
+        print("- Try the CLI: python cli.py")
+        print("- Read the help: python cli.py help")
+        print("- Start a conversation: python cli.py 'Hello!'")
     else:
         print(f"\n❌ {failed_count} test suite(s) failed.")
         print("\nPlease check the test output above for details.")

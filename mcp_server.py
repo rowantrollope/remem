@@ -237,10 +237,19 @@ async def search_memories(
         for i, memory in enumerate(memories, 1):
             text = memory.get('text', memory.get('final_text', 'No content'))
             id = memory.get('id', f'unknown-{i}')
-            score = memory.get('score', 0)
+            # Use relevance score if available, fallback to similarity score
+            relevance_score = memory.get('relevance_score', memory.get('score', 0))
+            similarity_score = memory.get('score', 0)
             timestamp = memory.get('timestamp', 'Unknown')
+            access_count = memory.get('access_count', 0)
+
+            # Show both relevance and similarity scores for transparency
+            score_info = f"[{relevance_score:.3f}]"
+            if relevance_score != similarity_score:
+                score_info += f" (sim: {similarity_score:.3f}, refs: {access_count})"
+
             formatted_results.append(
-                f"{i}. [{score:.3f}] {text}\n   ID: {id}\n   Stored: {timestamp}"
+                f"{i}. {score_info} {text}\n   ID: {id}\n   Stored: {timestamp}"
             )
 
         # Include filtering information in the response
@@ -522,6 +531,112 @@ async def get_cache_stats(
 
     except Exception as e:
         return f"Error getting cache stats: {str(e)}"
+
+@mcp.tool()
+async def get_relevance_config(vectorstore_name: str) -> str:
+    """Get current relevance scoring configuration.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to get config for
+    """
+    if not memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        # Initialize memory agent for the specific vectorstore if needed
+        if not init_memory_agent(vectorstore_name):
+            return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
+
+        config = memory_agent.get_relevance_config()
+
+        result = "Current Relevance Scoring Configuration:\n\n"
+        result += f"Vector Weight: {config['vector_weight']:.2f} (similarity score importance)\n"
+        result += f"Temporal Weight: {config['temporal_weight']:.2f} (recency importance)\n"
+        result += f"Usage Weight: {config['usage_weight']:.2f} (access frequency importance)\n"
+        result += f"Recency Decay Days: {config['recency_decay_days']:.1f} (creation date decay)\n"
+        result += f"Access Decay Days: {config['access_decay_days']:.1f} (last access decay)\n"
+        result += f"Usage Boost Factor: {config['usage_boost_factor']:.2f} (access count multiplier)\n"
+        result += f"Max Temporal Boost: {config['max_temporal_boost']:.2f} (temporal cap)\n"
+        result += f"Max Usage Boost: {config['max_usage_boost']:.2f} (usage cap)\n"
+
+        return result
+
+    except Exception as e:
+        return f"Error getting relevance config: {str(e)}"
+
+@mcp.tool()
+async def update_relevance_config(
+    vectorstore_name: str,
+    vector_weight: float = None,
+    temporal_weight: float = None,
+    usage_weight: float = None,
+    recency_decay_days: float = None,
+    access_decay_days: float = None,
+    usage_boost_factor: float = None,
+    max_temporal_boost: float = None,
+    max_usage_boost: float = None
+) -> str:
+    """Update relevance scoring configuration parameters.
+
+    Args:
+        vectorstore_name: Name of the vectorstore to update config for
+        vector_weight: Weight for vector similarity score (0.0-1.0)
+        temporal_weight: Weight for temporal recency component (0.0-1.0)
+        usage_weight: Weight for usage frequency component (0.0-1.0)
+        recency_decay_days: Days for creation recency to decay to ~37%
+        access_decay_days: Days for last access recency to decay to ~37%
+        usage_boost_factor: Multiplier for access count boost
+        max_temporal_boost: Maximum boost from temporal factors
+        max_usage_boost: Maximum boost from usage factors
+    """
+    if not memory_agent:
+        return "Error: Memory agent not initialized"
+
+    try:
+        # Initialize memory agent for the specific vectorstore if needed
+        if not init_memory_agent(vectorstore_name):
+            return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
+
+        # Build update parameters (only include non-None values)
+        update_params = {}
+        if vector_weight is not None:
+            update_params['vector_weight'] = vector_weight
+        if temporal_weight is not None:
+            update_params['temporal_weight'] = temporal_weight
+        if usage_weight is not None:
+            update_params['usage_weight'] = usage_weight
+        if recency_decay_days is not None:
+            update_params['recency_decay_days'] = recency_decay_days
+        if access_decay_days is not None:
+            update_params['access_decay_days'] = access_decay_days
+        if usage_boost_factor is not None:
+            update_params['usage_boost_factor'] = usage_boost_factor
+        if max_temporal_boost is not None:
+            update_params['max_temporal_boost'] = max_temporal_boost
+        if max_usage_boost is not None:
+            update_params['max_usage_boost'] = max_usage_boost
+
+        if not update_params:
+            return "No parameters provided to update"
+
+        # Update the configuration
+        updated_config = memory_agent.update_relevance_config(**update_params)
+
+        result = "Relevance configuration updated successfully!\n\n"
+        result += "New Configuration:\n"
+        result += f"Vector Weight: {updated_config['vector_weight']:.2f}\n"
+        result += f"Temporal Weight: {updated_config['temporal_weight']:.2f}\n"
+        result += f"Usage Weight: {updated_config['usage_weight']:.2f}\n"
+        result += f"Recency Decay Days: {updated_config['recency_decay_days']:.1f}\n"
+        result += f"Access Decay Days: {updated_config['access_decay_days']:.1f}\n"
+        result += f"Usage Boost Factor: {updated_config['usage_boost_factor']:.2f}\n"
+        result += f"Max Temporal Boost: {updated_config['max_temporal_boost']:.2f}\n"
+        result += f"Max Usage Boost: {updated_config['max_usage_boost']:.2f}\n"
+
+        return result
+
+    except Exception as e:
+        return f"Error updating relevance config: {str(e)}"
 
 @mcp.tool()
 async def clear_cache_stats(

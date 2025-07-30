@@ -181,7 +181,7 @@ def test_concurrent_cli_instances():
             try:
                 query = f"remember I am instance {instance_id}"
                 result = subprocess.run(
-                    [sys.executable, "main.py", query],
+                    [sys.executable, "cli.py", query],
                     capture_output=True,
                     text=True,
                     timeout=60,

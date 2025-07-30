@@ -44,7 +44,7 @@ run: ## Run the web API server
 	python web_app.py
 
 run-cli: ## Run the CLI interface
-	python main.py
+	python cli.py
 
 run-mcp: ## Run the MCP server
 	python mcp_server.py

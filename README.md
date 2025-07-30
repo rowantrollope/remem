@@ -11,10 +11,10 @@ This project provides **four main interfaces** for different use cases:
 ### 1. **CLI Interface** - Interactive Memory Operations
 ```bash
 # Interactive chat mode
-python main.py
+python cli.py
 
 # Single query mode
-python main.py "Remember that I like pizza"
+python cli.py "Remember that I like pizza"
 ```
 
 ### 2. **Web API Server** - REST API + Web Interface
@@ -62,7 +62,7 @@ python scripts/setup_mcp_server.py
    ```
 
 4. **Choose your interface:**
-   - CLI: `python main.py`
+   - CLI: `python cli.py`
    - Web: `python web_app.py` → visit http://localhost:5001
    - Programmatic: Import `LangGraphMemoryAgent` in your code
    - MCP: `python scripts/setup_mcp_server.py` → use with Claude Desktop or other MCP clients
@@ -129,13 +129,13 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 #### Interactive Chat Mode
 
 ```bash
-python main.py
+python cli.py
 ```
 
 #### Single Query Mode
 
 ```bash
-python main.py "Remember that I like pizza"
+python cli.py "Remember that I like pizza"
 ```
 
 #### Web API Server
@@ -201,7 +201,7 @@ make help
 
 ```
 remem/
-├── main.py                 # CLI entry point
+├── cli.py                 # CLI entry point
 ├── web_app.py             # Web API entry point
 ├── mcp_server.py          # MCP server entry point
 ├── requirements.txt       # Python dependencies

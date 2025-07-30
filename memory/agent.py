@@ -842,7 +842,7 @@ For every user request:
             import sys
             import os
             sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-            from main import get_vectorstore_name
+            from cli import get_vectorstore_name
 
             print(f"\n{colorize('Current vectorstore:', Colors.BRIGHT_CYAN)} {self.memory_agent.core.VECTORSET_KEY}")
             print("Select a new vectorstore:")

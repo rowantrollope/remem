@@ -1,5 +1,5 @@
 """
-Main entry point for the LangGraph Memory Agent CLI.
+CLI entry point for the LangGraph Memory Agent.
 """
 
 import os
@@ -174,22 +174,22 @@ def show_cli_help():
 {colorize('=' * 60, Colors.GRAY)}
 
 {colorize('USAGE:', Colors.BRIGHT_YELLOW)}
-  python main.py [question]           Ask a question directly
-  python main.py                      Start interactive chat mode
-  python main.py help                 Show this help message
+  python cli.py [question]           Ask a question directly
+  python cli.py                      Start interactive chat mode
+  python cli.py help                 Show this help message
 
 {colorize('EXAMPLES:', Colors.BRIGHT_YELLOW)}
-  python main.py "what coding style do I prefer?"
-  python main.py "remember that I like 4-space indentation"
-  python main.py "what are my travel preferences?"
+  python cli.py "what coding style do I prefer?"
+  python cli.py "remember that I like 4-space indentation"
+  python cli.py "what are my travel preferences?"
 
 {colorize('ENVIRONMENT VARIABLES:', Colors.BRIGHT_YELLOW)}
   {colorize('MEMORY_DEBUG=true', Colors.WHITE)}    Enable detailed debug output
   {colorize('MEMORY_VERBOSE=true', Colors.WHITE)}  Enable verbose logging
 
 {colorize('DEBUG EXAMPLES:', Colors.BRIGHT_YELLOW)}
-  MEMORY_DEBUG=true python main.py "your question"
-  MEMORY_VERBOSE=true python main.py
+  MEMORY_DEBUG=true python cli.py "your question"
+  MEMORY_VERBOSE=true python cli.py
 
 {colorize('INTERACTIVE MODE COMMANDS:', Colors.BRIGHT_YELLOW)}
   {colorize('/help', Colors.WHITE)}       Show interactive help

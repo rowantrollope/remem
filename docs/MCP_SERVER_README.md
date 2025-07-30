@@ -168,7 +168,7 @@ The server uses the FastMCP framework for easy tool definition and automatic sch
 1. Ensure Redis is running and accessible
 2. Verify OpenAI API key is valid
 3. Check server logs for error messages
-4. Test the memory agent directly with `python main.py`
+4. Test the memory agent directly with `python cli.py`
 
 ### Memory operations not working
 1. Verify Redis connection settings

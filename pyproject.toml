@@ -62,7 +62,7 @@ Issues = "https://github.com/rowantrollope/remem/issues"
 Documentation = "https://github.com/rowantrollope/remem#readme"
 
 [project.scripts]
-remem = "main:main"
+remem = "cli:main"
 remem-web = "web_app:main"
 remem-mcp = "mcp_server:main"
 

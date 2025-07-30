@@ -106,9 +106,9 @@ def test_command_line_help():
         help_commands = ["help", "--help", "-h"]
 
         for cmd in help_commands:
-            print(f"Testing: python main.py {cmd}")
+            print(f"Testing: python cli.py {cmd}")
             result = subprocess.run(
-                [sys.executable, "main.py", cmd],
+                [sys.executable, "cli.py", cmd],
                 capture_output=True,
                 text=True,
                 timeout=10
@@ -176,7 +176,7 @@ def test_command_line_query():
         try:
             # Test with timeout to prevent hanging
             result = subprocess.run(
-                [sys.executable, "main.py", test_query],
+                [sys.executable, "cli.py", test_query],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -418,7 +418,7 @@ def test_environment_variables():
         env_without_key = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
 
         result = subprocess.run(
-            [sys.executable, "main.py", "help"],
+            [sys.executable, "cli.py", "help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -757,9 +757,9 @@ def main():
     if failed_count == 0:
         print("\n🎉 All CLI tests passed!")
         print("\nThe CLI is working correctly. You can use:")
-        print("- python main.py (interactive mode)")
-        print("- python main.py 'your question' (single query mode)")
-        print("- python main.py help (show help)")
+        print("- python cli.py (interactive mode)")
+        print("- python cli.py 'your question' (single query mode)")
+        print("- python cli.py help (show help)")
         print("\n💡 For more comprehensive testing, install pexpect:")
         print("   pip install pexpect")
     else:
