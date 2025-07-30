@@ -188,6 +188,71 @@ def progress_indicator(message: str) -> None:
         print(f"{spinner} {message}...", end='', flush=True)
 
 
+def format_grounding_display(storage_result: dict) -> str:
+    """Format grounding information with enhanced visual display.
+
+    Shows the original text with color-coded replacements and a clear
+    summary of what was changed during contextual grounding.
+
+    Args:
+        storage_result: Dictionary containing grounding information
+
+    Returns:
+        Formatted string with color-coded grounding display
+    """
+    if not storage_result.get('grounding_applied'):
+        return ""
+
+    original_text = storage_result.get('original_text', '')
+    final_text = storage_result.get('final_text', '')
+    grounding_info = storage_result.get('grounding_info', {})
+    changes_made = grounding_info.get('changes_made', [])
+
+    if not changes_made:
+        return ""
+
+    # Create the enhanced display
+    lines = []
+    lines.append(colorize("🌍 Contextual Grounding Applied:", Colors.BRIGHT_CYAN))
+    lines.append("")
+
+    # Show original text with highlighted replacements
+    display_text = original_text
+
+    # Sort changes by position (if available) or by length (longest first to avoid overlap issues)
+    sorted_changes = sorted(changes_made, key=lambda x: len(x.get('original', '')), reverse=True)
+
+    # Apply color coding to show what was replaced
+    for change in sorted_changes:
+        original_word = change.get('original', '')
+
+        if original_word in display_text:
+            # Color the original word in red (what was replaced)
+            colored_original = colorize(original_word, Colors.BG_RED + Colors.WHITE)
+            display_text = display_text.replace(original_word, colored_original, 1)  # Replace only first occurrence
+
+    lines.append(f"   {colorize('Original:', Colors.GRAY)} {display_text}")
+    lines.append(f"   {colorize('Result:', Colors.GRAY)}   {colorize(final_text, Colors.BRIGHT_GREEN)}")
+    lines.append("")
+
+    # Show detailed changes
+    lines.append(f"   {colorize('Changes Made:', Colors.BRIGHT_YELLOW)}")
+    for i, change in enumerate(changes_made, 1):
+        original_word = change.get('original', '')
+        replacement = change.get('replacement', '')
+        change_type = change.get('type', 'unknown')
+
+        # Format the change with colors
+        original_colored = colorize(f'"{original_word}"', Colors.BRIGHT_RED)
+        replacement_colored = colorize(f'"{replacement}"', Colors.BRIGHT_GREEN)
+        type_colored = colorize(f'({change_type})', Colors.CYAN)
+        arrow = colorize('→', Colors.GRAY)
+
+        lines.append(f"   {colorize(f'{i}.', Colors.GRAY)} {original_colored} {arrow} {replacement_colored} {type_colored}")
+
+    return "\n".join(lines)
+
+
 def progress_done() -> None:
     """Clear progress indicator."""
     if is_verbose_enabled() or is_debug_enabled():

@@ -10,7 +10,7 @@ First, we store atomic memories about the user:
 
 ```javascript
 // Store basic preferences as Memories
-await fetch('/api/memory', {
+await fetch('/api/memory/travel_agent', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -19,7 +19,7 @@ await fetch('/api/memory', {
   })
 });
 
-await fetch('/api/memory', {
+await fetch('/api/memory/travel_agent', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -28,7 +28,7 @@ await fetch('/api/memory', {
   })
 });
 
-await fetch('/api/memory', {
+await fetch('/api/memory/travel_agent', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -44,7 +44,7 @@ Now we can construct mental states for specific queries:
 
 ```javascript
 // Construct mental state for flight booking
-const flightMemories = await fetch('/api/klines/recall', {
+const flightMemories = await fetch('/api/klines/travel_agent/recall', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({

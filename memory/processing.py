@@ -333,12 +333,16 @@ Your response:"""
                 question = memory.get("original_question", "Unknown question")
                 answer = memory.get("answer", memory.get("text", "No answer available"))
                 confidence = memory.get("confidence", "unknown")
+                memory_id = memory.get("id", "unknown")
 
                 result_lines.append(
                     f"{i}. [K-LINE] Q: {question}"
                 )
                 result_lines.append(
                     f"   A: {answer} (confidence: {confidence})"
+                )
+                result_lines.append(
+                    f"   ID: {memory_id}"
                 )
                 result_lines.append(
                     f"   (from {memory['formatted_time']}, {score_percent:.1f}% similar)"
@@ -354,9 +358,15 @@ Your response:"""
             else:
                 # Format regular neme
                 text = memory.get("text", memory.get("final_text", memory.get("raw_text", "No text available")))
+                memory_id = memory.get("id", "unknown")
                 result_lines.append(
-                    f"{i}. {text} "
-                    f"(from {memory['formatted_time']}, {score_percent:.1f}% similar)"
+                    f"{i}. {text}"
+                )
+                result_lines.append(
+                    f"   ID: {memory_id}"
+                )
+                result_lines.append(
+                    f"   (from {memory['formatted_time']}, {score_percent:.1f}% similar)"
                 )
 
             # Show tags for both types

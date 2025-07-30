@@ -89,8 +89,7 @@ Store a new memory in the system.
 
 **Parameters**:
 - `text` (required): The memory content to store
-- `memory_type` (optional): Type of memory (default: "neme")
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
+- `vectorstore_name` (required): Vectorstore name
 - `apply_grounding` (optional): Apply contextual grounding (default: true)
 
 **Example**: "Store this memory: I met John at the coffee shop yesterday"
@@ -100,9 +99,8 @@ Search for relevant memories using vector similarity.
 
 **Parameters**:
 - `query` (required): Search query text
+- `vectorstore_name` (required): Vectorstore name
 - `top_k` (optional): Number of results (default: 5)
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
-- `memory_type` (optional): Memory type filter (default: "neme")
 - `min_similarity` (optional): Minimum similarity threshold (default: 0.7)
 
 **Example**: "Search my memories for coffee shops"
@@ -111,7 +109,7 @@ Search for relevant memories using vector similarity.
 Get statistics about the memory system.
 
 **Parameters**:
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
+- `vectorstore_name` (required): Vectorstore name
 
 **Example**: "What's the current state of my memory system?"
 
@@ -120,8 +118,8 @@ Answer a question using the memory system with confidence scoring.
 
 **Parameters**:
 - `question` (required): The question to answer
+- `vectorstore_name` (required): Vectorstore name
 - `top_k` (optional): Number of memories to consider (default: 5)
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
 - `confidence_threshold` (optional): Minimum confidence threshold (default: 0.7)
 
 **Example**: "What restaurants have I been to?"
@@ -131,7 +129,7 @@ Extract and store memories from conversation text.
 
 **Parameters**:
 - `conversation_text` (required): Text to extract memories from
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
+- `vectorstore_name` (required): Vectorstore name
 - `apply_grounding` (optional): Apply contextual grounding (default: true)
 
 **Example**: "Extract memories from this conversation: [conversation text]"
@@ -140,11 +138,11 @@ Extract and store memories from conversation text.
 Set contextual information for memory grounding.
 
 **Parameters**:
+- `vectorstore_name` (required): Vectorstore name
 - `location` (optional): Current location
 - `activity` (optional): Current activity
 - `people_present` (optional): People present (comma-separated)
 - `environment` (optional): Environmental context
-- `vectorstore_name` (optional): Vectorstore name (default: "memories")
 
 **Example**: "Set my context: location=home, activity=working, environment=quiet"
 

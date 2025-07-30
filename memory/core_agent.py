@@ -364,13 +364,12 @@ def main():
                 if memory_text:
                     storage_result = agent.store_memory(memory_text, apply_grounding=True)
                     print(f"✅ Stored Neme with ID: {storage_result['memory_id']}")
-                    if storage_result['grounding_applied']:
-                        print(f"🌍 Contextual grounding applied:")
-                        print(f"   Original: {storage_result['original_text']}")
-                        print(f"   Grounded: {storage_result['final_text']}")
-                        if 'grounding_info' in storage_result and storage_result['grounding_info']['changes_made']:
-                            changes = storage_result['grounding_info']['changes_made']
-                            print(f"   Changes: {len(changes)} modifications made")
+
+                    # Import and use enhanced grounding display
+                    from .debug_utils import format_grounding_display
+                    grounding_display = format_grounding_display(storage_result)
+                    if grounding_display:
+                        print(grounding_display)
                 else:
                     print("❌ Please provide memory text after 'remember'")
 

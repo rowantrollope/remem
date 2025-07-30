@@ -278,6 +278,15 @@ http://localhost:5001
 
 Currently no authentication is required. The API is designed for local development and testing.
 
+### ⚠️ API Structure Note
+
+**All memory operations require a `vectorstore_name` path parameter.** The examples below show the old API structure for reference, but the current API uses:
+- `POST /api/memory/{vectorstore_name}` instead of `POST /api/memory`
+- `POST /api/memory/{vectorstore_name}/search` instead of `POST /api/memory/search`
+- etc.
+
+See the [API Migration Guide](#api-migration-guide) section below for complete current API structure.
+
 ---
 
 ### Developer Memory APIs
@@ -823,16 +832,29 @@ The `filter` parameter supports Redis VectorSet filter syntax:
 
 ### API Migration Guide
 
-**Old API → New API:**
-- `/api/remember` → `/api/memory`
-- `/api/recall` → `/api/memory/search`
-- `/api/ask` → `/api/memory/answer` (for structured responses) or `/api/chat` (for conversations)
-- `/api/memory-info` → `/api/memory` (GET)
-- `/api/context` → `/api/memory/context`
-- `/api/delete/{id}` → `/api/memory/{id}` (DELETE)
-- `/api/delete-all` → `/api/memory` (DELETE)
+**⚠️ IMPORTANT: Current API uses vectorstore_name as path parameter**
 
-The new API provides cleaner, more RESTful endpoints with better separation of concerns between developer operations and chat applications.
+All memory operations now require a `vectorstore_name` path parameter for proper memory isolation:
+
+**Current API Structure:**
+- Store memory: `POST /api/memory/{vectorstore_name}`
+- Search memories: `POST /api/memory/{vectorstore_name}/search`
+- Get memory info: `GET /api/memory/{vectorstore_name}`
+- Set context: `POST /api/memory/{vectorstore_name}/context`
+- Get context: `GET /api/memory/{vectorstore_name}/context`
+- Delete memory: `DELETE /api/memory/{vectorstore_name}/{memory_id}`
+- Clear all: `DELETE /api/memory/{vectorstore_name}/all`
+- K-lines recall: `POST /api/klines/{vectorstore_name}/recall`
+- K-lines ask: `POST /api/klines/{vectorstore_name}/ask`
+
+**Example:** Use `memories` as the default vectorstore name:
+```bash
+curl -X POST http://localhost:5001/api/memory/memories \
+  -H "Content-Type: application/json" \
+  -d '{"text": "I love pizza"}'
+```
+
+The API provides proper memory isolation with vectorstore-specific operations and cleaner RESTful endpoints.
 
 ## Configuration Management
 

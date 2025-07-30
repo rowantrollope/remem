@@ -60,7 +60,7 @@ class LangGraphMemoryAgent:
 
         # Conversation buffer for memory extraction
         self.conversation_buffer = []
-        self.extraction_threshold = 3  # Extract after 3 meaningful exchanges to reduce over-extraction
+        self.extraction_threshold = 1  # Extract after 1 meaningful exchange to capture conversational memories
         self.extraction_context = "I am a personal assistant. Extract only significant new user information like preferences, constraints, or important personal details that would be valuable for future assistance. Be selective and avoid extracting minor details or temporary information."
 
         # Note: Duplicate prevention now handled by context-aware extraction
@@ -146,6 +146,13 @@ class LangGraphMemoryAgent:
 3. **SELECTIVE EXTRACTION**: Only extract significant new information that would be valuable for future assistance
 4. **AVOID OVER-EXTRACTION**: Don't store minor details, temporary information, or duplicates
 
+**IMPORTANT - Memory Display Format**:
+When displaying memory search results to users, ALWAYS include the memory ID for each memory. Format like this:
+1. [Memory text]
+   ID: [memory_id]
+
+This allows users to reference specific memories for deletion or other operations.
+
 **What to Extract**:
 - Important preferences (dietary restrictions, travel preferences, seating preferences, food likes/dislikes)
 - Significant constraints (budget limits, accessibility needs, time constraints)
@@ -189,6 +196,13 @@ Be helpful and conversational while being selective about what information is wo
 2. **USE CONTEXT**: Include relevant memories in your response to provide personalized assistance
 3. **SELECTIVE MEMORY**: Only remember significant information that would improve future assistance
 4. **AVOID DUPLICATES**: Don't store information that's already captured
+
+**IMPORTANT - Memory Display Format**:
+When displaying memory search results to users, ALWAYS include the memory ID for each memory. Format like this:
+1. [Memory text]
+   ID: [memory_id]
+
+This allows users to reference specific memories for deletion or other operations.
 
 **Remember These Types of Information**:
 - Important preferences (dietary restrictions, travel preferences, seating preferences, food likes/dislikes)
@@ -747,6 +761,10 @@ For every user request:
   {colorize('remem>', Colors.CYAN)} "I like window seats when flying"
   {colorize('remem>', Colors.CYAN)} "What are my travel preferences?"
 
+{colorize('DIRECT MEMORY COMMANDS:', Colors.BRIGHT_YELLOW)}
+  {colorize('remember <text>', Colors.WHITE)}     - Store memory directly with grounding
+  {colorize('remember-raw <text>', Colors.WHITE)} - Store memory directly without grounding
+
 {colorize('SPECIAL COMMANDS:', Colors.BRIGHT_YELLOW)}
   {colorize('/help', Colors.WHITE)}       - Show this help message
   {colorize('/profile', Colors.WHITE)}    - Show your complete user profile summary
@@ -898,6 +916,40 @@ For every user request:
                         continue
                     elif user_input.lower() in ['/debug', 'debug']:
                         self.toggle_debug()
+                        continue
+
+                    # Handle direct memory storage commands
+                    elif user_input.lower().startswith('remember '):
+                        memory_text = user_input[9:].strip()
+                        if memory_text:
+                            try:
+                                storage_result = self.memory_agent.store_memory(memory_text, apply_grounding=True)
+                                success_print(f"Memory stored with ID: {storage_result['memory_id']}")
+
+                                # Show grounding information if applied
+                                if storage_result.get('grounding_applied'):
+                                    original = storage_result.get('original_text', '')
+                                    final = storage_result.get('final_text', '')
+                                    if original != final:
+                                        print(f"\n🌍 Contextual grounding applied:")
+                                        print(f"  Original: {original}")
+                                        print(f"  Grounded: {final}")
+                            except Exception as e:
+                                error_print(f"Failed to store memory: {e}")
+                        else:
+                            error_print("Please provide memory text after 'remember'")
+                        continue
+
+                    elif user_input.lower().startswith('remember-raw '):
+                        memory_text = user_input[12:].strip()
+                        if memory_text:
+                            try:
+                                storage_result = self.memory_agent.store_memory(memory_text, apply_grounding=False)
+                                success_print(f"Memory stored (no grounding) with ID: {storage_result['memory_id']}")
+                            except Exception as e:
+                                error_print(f"Failed to store memory: {e}")
+                        else:
+                            error_print("Please provide memory text after 'remember-raw'")
                         continue
 
                     # Regular conversation

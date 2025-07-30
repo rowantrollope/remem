@@ -26,7 +26,7 @@ Asynchronous memory processing system for improved performance and hierarchical 
 ## NEME API
 
 ### Store Atomic Memory
-**POST** `/api/memory`
+**POST** `/api/memory/{vectorstore_name}`
 
 Store a fundamental memory unit with optional contextual grounding.
 
@@ -51,7 +51,7 @@ Store a fundamental memory unit with optional contextual grounding.
 ```
 
 ### Search Atomic Memories
-**POST** `/api/memory/search`
+**POST** `/api/memory/{vectorstore_name}/search`
 
 Find relevant Memories using vector similarity search.
 
@@ -82,30 +82,30 @@ Find relevant Memories using vector similarity search.
 ```
 
 ### Get Memory Statistics
-**GET** `/api/memory`
+**GET** `/api/memory/{vectorstore_name}`
 
 Retrieve system information and memory count.
 
 ### Delete Specific Memory
-**DELETE** `/api/memory/{memory_id}`
+**DELETE** `/api/memory/{vectorstore_name}/{memory_id}`
 
 Remove a specific Neme by ID.
 
 ### Clear All Memories
-**DELETE** `/api/memory`
+**DELETE** `/api/memory/{vectorstore_name}/all`
 
 Remove all stored Memories from the system.
 
 ### Context Management
-**POST** `/api/memory/context` - Set current context for grounding
-**GET** `/api/memory/context` - Get current context information
+**POST** `/api/memory/{vectorstore_name}/context` - Set current context for grounding
+**GET** `/api/memory/{vectorstore_name}/context` - Get current context information
 
 ---
 
 ## K-LINE API
 
 ### Construct Mental State
-**POST** `/api/klines/recall`
+**POST** `/api/klines/{vectorstore_name}/recall`
 
 Build a mental state (K-line) by activating relevant Memories using enhanced relevance scoring.
 
@@ -147,7 +147,7 @@ Build a mental state (K-line) by activating relevant Memories using enhanced rel
 Memories are automatically sorted by `relevance_score` (highest first) and access tracking is updated on each retrieval.
 
 ### Question Answering with Reasoning
-**POST** `/api/klines/answer`
+**POST** `/api/klines/{vectorstore_name}/ask`
 
 Answer questions using K-line construction and sophisticated reasoning.
 

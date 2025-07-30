@@ -35,12 +35,13 @@ def store_memory(memory_text: str, apply_grounding: bool = True) -> str:
 
         # Create a detailed response message
         message = f"Successfully stored memory with ID: {memory_id}"
+
+        # Add enhanced grounding display if grounding was applied
         if storage_result['grounding_applied']:
-            message += f"\nOriginal: {storage_result['original_text']}"
-            message += f"\nGrounded: {storage_result['final_text']}"
-            if 'grounding_info' in storage_result and storage_result['grounding_info']['changes_made']:
-                changes = storage_result['grounding_info']['changes_made']
-                message += f"\nChanges made: {len(changes)} grounding modifications"
+            from .debug_utils import format_grounding_display
+            grounding_display = format_grounding_display(storage_result)
+            if grounding_display:
+                message += f"\n\n{grounding_display}"
 
         return message
     except Exception as e:
@@ -230,6 +231,7 @@ def format_memory_results(memories_json: str) -> str:
                 score = score / 100.0
 
             formatted_memories.append({
+                "id": memory.get("id", "unknown"),  # Preserve memory ID
                 "text": memory["text"],
                 "score": score,
                 "formatted_time": memory.get("timestamp", memory.get("formatted_time", "")),

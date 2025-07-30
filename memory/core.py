@@ -418,12 +418,7 @@ If no context-dependent references are found, return empty arrays for all catego
             except RuntimeError:
                 # LLM manager not initialized (CLI/MCP context), skip context analysis
                 print(f"⚠️ Context analysis skipped: LLM manager not initialized")
-                return {
-                    "context_type": "unknown",
-                    "dependencies": [],
-                    "analysis_applied": False,
-                    "error": "LLM manager not initialized"
-                }
+                return {"temporal": [], "spatial": [], "personal": [], "environmental": [], "demonstrative": []}
 
             # Wrap with LangCache if available
             if self.langcache_client:
@@ -449,8 +444,21 @@ If no context-dependent references are found, return empty arrays for all catego
 
             # Parse JSON response
             try:
-                print(f"Dependecies found... {analysis_result}")
-                dependencies = json.loads(analysis_result)
+                # Extract JSON from markdown code blocks if present
+                json_text = analysis_result.strip()
+                if json_text.startswith('```json'):
+                    # Remove markdown code block formatting
+                    json_text = json_text[7:]  # Remove ```json
+                    if json_text.endswith('```'):
+                        json_text = json_text[:-3]  # Remove ```
+                elif json_text.startswith('```'):
+                    # Remove generic code block formatting
+                    json_text = json_text[3:]  # Remove ```
+                    if json_text.endswith('```'):
+                        json_text = json_text[:-3]  # Remove ```
+
+                json_text = json_text.strip()
+                dependencies = json.loads(json_text)
                 return dependencies
             except json.JSONDecodeError:
                 print(f"⚠️ Could not parse context analysis: {analysis_result}")
@@ -572,7 +580,21 @@ Respond with a JSON object:
             grounding_result = response['content'].strip()
 
             try:
-                grounding_data = json.loads(grounding_result)
+                # Extract JSON from markdown code blocks if present
+                json_text = grounding_result.strip()
+                if json_text.startswith('```json'):
+                    # Remove markdown code block formatting
+                    json_text = json_text[7:]  # Remove ```json
+                    if json_text.endswith('```'):
+                        json_text = json_text[:-3]  # Remove ```
+                elif json_text.startswith('```'):
+                    # Remove generic code block formatting
+                    json_text = json_text[3:]  # Remove ```
+                    if json_text.endswith('```'):
+                        json_text = json_text[:-3]  # Remove ```
+
+                json_text = json_text.strip()
+                grounding_data = json.loads(json_text)
 
                 return {
                     "original_text": memory_text,

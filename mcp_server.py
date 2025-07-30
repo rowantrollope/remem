@@ -28,6 +28,9 @@ from mcp.server.fastmcp import FastMCP
 # Import remem memory system
 from memory.core_agent import MemoryAgent
 
+# Import LLM manager
+from llm.llm_manager import LLMConfig, init_llm_manager as initialize_llm_manager
+
 # Import LangCache client
 from clients.langcache_client import LangCacheClient, is_cache_enabled_for_operation
 
@@ -40,6 +43,35 @@ mcp = FastMCP("remem-memory")
 # Global instances
 memory_agent: Optional[MemoryAgent] = None
 langcache_client: Optional[LangCacheClient] = None
+
+def init_llm_manager() -> bool:
+    """Initialize the LLM manager for context analysis and grounding."""
+    try:
+        # Create default LLM configurations for MCP server
+        tier1_config = LLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.1,
+            max_tokens=1000,
+            api_key=os.getenv("OPENAI_API_KEY"),
+            timeout=30
+        )
+
+        tier2_config = LLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature=0.1,
+            max_tokens=500,
+            api_key=os.getenv("OPENAI_API_KEY"),
+            timeout=30
+        )
+
+        initialize_llm_manager(tier1_config, tier2_config)
+        print("✅ LLM manager initialized for MCP server", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"⚠️ Error initializing LLM manager: {e}", file=sys.stderr)
+        return False
 
 def init_langcache_client() -> bool:
     """Initialize the LangCache client with proper error handling."""
@@ -57,7 +89,7 @@ def init_langcache_client() -> bool:
         print(f"⚠️ Error initializing LangCache client: {e}", file=sys.stderr)
         return False
 
-def init_memory_agent(vectorstore_name: str = "augment:remem") -> bool:
+def init_memory_agent(vectorstore_name: str) -> bool:
     """Initialize the memory agent with proper error handling."""
     global memory_agent
     try:
@@ -117,21 +149,21 @@ def cached_tool(operation_type: str = "mcp_tool"):
 @mcp.tool()
 async def store_memory(
     text: str,
-    memory_type: str = "neme",
-    vectorstore_name: str = "augment:remem",
+    vectorstore_name: str,
     apply_grounding: bool = True
 ) -> str:
-    """Store a new memory (neme) in the memory system.
+    """Store a new memory in the memory system.
     
     Args:
         text: The memory content to store
-        memory_type: Type of memory (default: "neme")
         vectorstore_name: Name of the vectorstore to use
         apply_grounding: Whether to apply contextual grounding
     """
     if not memory_agent:
         return "Error: Memory agent not initialized"
-    
+
+    print(f"🔍 MCP DEBUG: Storing memory with grounding={apply_grounding}", file=sys.stderr)
+
     try:
         # Store the memory using the core agent
         result = memory_agent.store_memory(
@@ -139,13 +171,25 @@ async def store_memory(
             apply_grounding=apply_grounding,
             vectorset_key=vectorstore_name
         )
-        
-        if result.get('success'):
-            memory_id = result.get('memory_id', 'unknown')
-            return f"Memory stored successfully with ID: {memory_id}"
+
+        print(f"🔍 MCP DEBUG: Memory storage result: {result}", file=sys.stderr)
+
+        # The core store_memory method returns the memory data directly if successful
+        if result and result.get('memory_id'):
+            memory_id = result.get('memory_id')
+            grounding_applied = result.get('grounding_applied', False)
+
+            response = f"Memory stored successfully with ID: {memory_id}"
+            if grounding_applied:
+                original = result.get('original_text', '')
+                final = result.get('final_text', '')
+                if original != final:
+                    response += f"\n\n🌍 Contextual grounding applied:\n  Original: {original}\n  Grounded: {final}"
+
+            return response
         else:
-            return f"Failed to store memory: {result.get('message', 'Unknown error')}"
-            
+            return f"Failed to store memory: Invalid response from memory system"
+
     except Exception as e:
         return f"Error storing memory: {str(e)}"
 
@@ -153,9 +197,8 @@ async def store_memory(
 @cached_tool(operation_type="memory_search")
 async def search_memories(
     query: str,
+    vectorstore_name: str,
     top_k: int = 5,
-    vectorstore_name: str = "augment:remem",
-    memory_type: str = "neme",
     min_similarity: float = 0.7
 ) -> str:
     """Search for relevant memories using vector similarity.
@@ -172,38 +215,34 @@ async def search_memories(
     
     try:
         # Search memories using the core agent
-        result = memory_agent.search_memories(
+        memories = memory_agent.search_memories(
             query=query,
             top_k=top_k,
-            filterBy=f'type == "{memory_type}"',
             min_similarity=min_similarity,
             vectorset_key=vectorstore_name
         )
-        
-        if result.get('success'):
-            memories = result.get('memories', [])
-            if not memories:
-                return f"No memories found for query: '{query}'"
-            
-            # Format the results
-            formatted_results = []
-            for i, memory in enumerate(memories, 1):
-                text = memory.get('text', memory.get('final_text', 'No content'))
-                score = memory.get('score', 0)
-                timestamp = memory.get('timestamp', 'Unknown')
-                formatted_results.append(
-                    f"{i}. [{score:.3f}] {text}\n   Stored: {timestamp}"
-                )
-            
-            return f"Found {len(memories)} memories:\n\n" + "\n\n".join(formatted_results)
-        else:
-            return f"Search failed: {result.get('message', 'Unknown error')}"
+
+        if not memories:
+            return f"No memories found for query: '{query}'"
+
+        # Format the results
+        formatted_results = []
+        for i, memory in enumerate(memories, 1):
+            text = memory.get('text', memory.get('final_text', 'No content'))
+            id = memory.get('id', f'unknown-{i}')
+            score = memory.get('score', 0)
+            timestamp = memory.get('timestamp', 'Unknown')
+            formatted_results.append(
+                f"{i}. [{score:.3f}] {text}\n   ID: {id}\n   Stored: {timestamp}"
+            )
+
+        return f"Found {len(memories)} memories:\n\n" + "\n\n".join(formatted_results)
             
     except Exception as e:
         return f"Error searching memories: {str(e)}"
 
 @mcp.tool()
-async def get_memory_stats(vectorstore_name: str = "augment:remem") -> str:
+async def get_memory_stats(vectorstore_name: str) -> str:
     """Get statistics about the memory system.
     
     Args:
@@ -214,27 +253,31 @@ async def get_memory_stats(vectorstore_name: str = "augment:remem") -> str:
     
     try:
         # Get memory info using the core agent
-        result = memory_agent.get_memory_info()
-        
-        if result.get('success'):
-            info = result.get('info', {})
-            stats = [
-                f"Memory Count: {info.get('memory_count', 0)}",
-                f"Vector Dimension: {info.get('vector_dimension', 'Unknown')}",
-                f"Embedding Model: {info.get('embedding_model', 'Unknown')}",
-                f"Vectorstore: {vectorstore_name}",
-            ]
-            
-            # Add memory type breakdown if available
-            type_breakdown = info.get('memory_types', {})
-            if type_breakdown:
-                stats.append("\nMemory Types:")
-                for mem_type, count in type_breakdown.items():
-                    stats.append(f"  {mem_type}: {count}")
-            
-            return "\n".join(stats)
-        else:
-            return f"Failed to get memory stats: {result.get('message', 'Unknown error')}"
+        info = memory_agent.get_memory_info()
+
+        # Check if there's an error in the result
+        if info.get('error'):
+            return f"Failed to get memory stats: {info.get('error')}"
+
+        stats = [
+            f"Memory Count: {info.get('memory_count', 0)}",
+            f"Vector Dimension: {info.get('vector_dimension', 'Unknown')}",
+            f"Embedding Model: {info.get('embedding_model', 'Unknown')}",
+            f"Vectorstore: {vectorstore_name}",
+        ]
+
+        # Add memory type breakdown if available
+        type_breakdown = info.get('memory_types', {})
+        if type_breakdown:
+            stats.append("\nMemory Types:")
+            for mem_type, count in type_breakdown.items():
+                stats.append(f"  {mem_type}: {count}")
+
+        # Add note if present
+        if info.get('note'):
+            stats.append(f"\nNote: {info.get('note')}")
+
+        return "\n".join(stats)
             
     except Exception as e:
         return f"Error getting memory stats: {str(e)}"
@@ -243,8 +286,8 @@ async def get_memory_stats(vectorstore_name: str = "augment:remem") -> str:
 @cached_tool(operation_type="question_answering")
 async def answer_question(
     question: str,
+    vectorstore_name: str,
     top_k: int = 5,
-    vectorstore_name: str = "augment:remem",
     confidence_threshold: float = 0.7
 ) -> str:
     """Answer a question using the memory system with confidence scoring.
@@ -283,7 +326,7 @@ async def answer_question(
 @mcp.tool()
 async def extract_and_store_memories(
     conversation_text: str,
-    vectorstore_name: str = "augment:remem",
+    vectorstore_name: str,
     apply_grounding: bool = True
 ) -> str:
     """Extract and store memories from a conversation or text.
@@ -320,11 +363,11 @@ async def extract_and_store_memories(
 
 @mcp.tool()
 async def set_context(
+    vectorstore_name: str,
     location: str = "",
     activity: str = "",
     people_present: str = "",
-    environment: str = "",
-    vectorstore_name: str = "augment:remem"
+    environment: str = ""
 ) -> str:
     """Set contextual information for memory grounding.
 
@@ -367,7 +410,7 @@ async def set_context(
         return f"Error setting context: {str(e)}"
 
 @mcp.tool()
-async def get_context(vectorstore_name: str = "augment:remem") -> str:
+async def get_context(vectorstore_name: str) -> str:
     """Get current contextual information.
 
     Args:
@@ -406,8 +449,8 @@ async def get_context(vectorstore_name: str = "augment:remem") -> str:
 @mcp.tool()
 async def recall_with_klines(
     query: str,
+    vectorstore_name: str,
     top_k: int = 5,
-    vectorstore_name: str = "augment:remem",
     use_advanced_filtering: bool = True
 ) -> str:
     """Advanced memory recall using k-lines for sophisticated reasoning.
@@ -488,7 +531,7 @@ async def clear_cache_stats(
 @mcp.tool()
 async def delete_memory(
     memory_id: str,
-    vectorstore_name: str = "augment:remem"
+    vectorstore_name: str
 ) -> str:
     """Delete a specific memory by its ID.
 
@@ -515,7 +558,7 @@ async def delete_memory(
 
 @mcp.tool()
 async def clear_all_memories(
-    vectorstore_name: str = "augment:remem",
+    vectorstore_name: str,
     confirm: bool = False
 ) -> str:
     """Clear all memories from a vectorstore.
@@ -547,8 +590,13 @@ async def clear_all_memories(
         return f"Error clearing memories: {str(e)}"
 
 if __name__ == "__main__":
+    # Initialize the LLM manager first (required for grounding)
+    if not init_llm_manager():
+        print("Failed to initialize LLM manager", file=sys.stderr)
+        sys.exit(1)
+
     # Initialize the memory agent
-    if not init_memory_agent():
+    if not init_memory_agent("augment:global"):
         print("Failed to initialize memory agent", file=sys.stderr)
         sys.exit(1)
 
