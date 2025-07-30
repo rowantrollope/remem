@@ -214,16 +214,23 @@ async def search_memories(
         return "Error: Memory agent not initialized"
     
     try:
-        # Search memories using the core agent
-        memories = memory_agent.search_memories(
+        # Search memories using the memory agent - now returns dict with memories and filtering info
+        search_result = memory_agent.search_memories(
             query=query,
             top_k=top_k,
             min_similarity=min_similarity,
             vectorset_key=vectorstore_name
         )
 
+        memories = search_result['memories']
+        filtering_info = search_result['filtering_info']
+
         if not memories:
-            return f"No memories found for query: '{query}'"
+            excluded_count = filtering_info['excluded_count']
+            if excluded_count > 0:
+                return f"No memories found for query: '{query}' (found {excluded_count} memories below similarity threshold {min_similarity})"
+            else:
+                return f"No memories found for query: '{query}'"
 
         # Format the results
         formatted_results = []
@@ -236,7 +243,13 @@ async def search_memories(
                 f"{i}. [{score:.3f}] {text}\n   ID: {id}\n   Stored: {timestamp}"
             )
 
-        return f"Found {len(memories)} memories:\n\n" + "\n\n".join(formatted_results)
+        # Include filtering information in the response
+        result = f"Found {len(memories)} memories"
+        if filtering_info['excluded_count'] > 0:
+            result += f" ({filtering_info['excluded_count']} excluded below similarity threshold {min_similarity})"
+        result += f":\n\n" + "\n\n".join(formatted_results)
+
+        return result
             
     except Exception as e:
         return f"Error searching memories: {str(e)}"

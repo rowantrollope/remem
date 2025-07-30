@@ -69,10 +69,13 @@ def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str
         if validation_result["type"] == "search":
             # Use the embedding-optimized query for vector search
             search_query = validation_result.get("embedding_query") or validation_result["content"]
-            memories = _memory_agent.search_memories(search_query, top_k, filter_expr)
+            search_result = _memory_agent.search_memories(search_query, top_k, filter_expr)
         else:
             # For help queries, still search but with original query
-            memories = _memory_agent.search_memories(query, top_k, filter_expr)
+            search_result = _memory_agent.search_memories(query, top_k, filter_expr)
+
+        memories = search_result['memories']
+        filtering_info = search_result['filtering_info']
 
         # Format memories for LLM consumption
         formatted_memories = []
@@ -89,7 +92,8 @@ def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str
         return json.dumps({
             "memories": formatted_memories,
             "count": len(formatted_memories),
-            "query": query
+            "query": query,
+            "filtering_info": filtering_info
         }, indent=2)
     except Exception as e:
         return f"Error searching memories: {str(e)}"

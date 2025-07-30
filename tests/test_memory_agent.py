@@ -60,7 +60,8 @@ def test_memory_agent():
         
         for query in test_queries:
             print(f"\n🔍 Query: {query}")
-            memories = agent.search_memories(query, top_k=2)
+            search_result = agent.search_memories(query, top_k=2)
+            memories = search_result['memories']
             result = agent.format_memory_results(memories)
             print(result)
         

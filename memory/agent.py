@@ -382,11 +382,12 @@ For every user request:
             # STEP 1: Search for existing relevant memories first
             debug_print("Searching for existing relevant memories...", "MEMORY")
 
-            existing_memories = self.memory_agent.search_memories(
+            search_result = self.memory_agent.search_memories(
                 conversation_text,
                 top_k=5,
                 min_similarity=0.8  # Higher threshold to be more selective
             )
+            existing_memories = search_result['memories']
 
             if is_debug_enabled():
                 if existing_memories:
@@ -440,7 +441,8 @@ For every user request:
 
             # Search for each key phrase in recent memories
             for phrase in key_phrases:
-                recent_memories = self.memory_agent.search_memories(phrase, top_k=3, min_similarity=0.85)
+                search_result = self.memory_agent.search_memories(phrase, top_k=3, min_similarity=0.85)
+                recent_memories = search_result['memories']
                 if recent_memories:
                     # Check if any recent memory is very similar and recent (within last hour)
                     from datetime import datetime, timedelta, timezone

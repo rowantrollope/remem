@@ -85,15 +85,15 @@ class MemoryService:
                 if validation_result["type"] == "search":
                     search_query = validation_result.get("embedding_query") or validation_result["content"]
                     print(f"🔍 Using optimized search query: '{search_query}'")
-                    search_result = self.memory_agent.memory_agent.search_memories_with_filtering_info(
+                    search_result = self.memory_agent.memory_agent.search_memories(
                         search_query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
                     )
                 else:
-                    search_result = self.memory_agent.memory_agent.search_memories_with_filtering_info(
+                    search_result = self.memory_agent.memory_agent.search_memories(
                         query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
                     )
             else:
-                search_result = self.memory_agent.memory_agent.search_memories_with_filtering_info(
+                search_result = self.memory_agent.memory_agent.search_memories(
                     query, top_k, filter_expr, min_similarity, vectorset_key=vectorstore_name
                 )
 

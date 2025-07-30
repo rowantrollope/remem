@@ -310,8 +310,9 @@ def test_memory_operations():
     if stored_ids:
         try:
             search_result = agent.memory_agent.search_memories("coding preferences", top_k=5)
-            if search_result and len(search_result) > 0:
-                print(f"✅ Memory retrieval works - found {len(search_result)} memories")
+            memories = search_result['memories']
+            if memories and len(memories) > 0:
+                print(f"✅ Memory retrieval works - found {len(memories)} memories")
             else:
                 print("❌ Memory retrieval failed - no results")
         except Exception as e:
@@ -587,7 +588,8 @@ def test_performance_and_stress():
 
         for i in range(5):
             try:
-                results = agent.memory_agent.search_memories(f"performance test {i}", top_k=3)
+                search_result = agent.memory_agent.search_memories(f"performance test {i}", top_k=3)
+                results = search_result['memories']
                 if results:
                     successful_searches += 1
             except Exception as e:

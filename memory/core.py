@@ -736,7 +736,7 @@ Respond with a JSON object:
             print(f"❌ Memory storage error: {e}")
             raise
 
-    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> Dict[str, Any]:
         """Search for relevant memories using VectorSet similarity.
 
         Args:
@@ -747,7 +747,9 @@ Respond with a JSON object:
             vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
-            List of matching memories with metadata that meet the minimum similarity threshold
+            Dictionary containing:
+            - memories: List of matching memories with metadata that meet the minimum similarity threshold
+            - filtering_info: Information about included/excluded memories
         """
         # Get embedding for query
         query_embedding = self._get_embedding(query)

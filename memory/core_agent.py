@@ -90,14 +90,14 @@ class MemoryAgent:
     # underlies all higher-level cognitive operations.
     # =========================================================================
     def store_memory(self, memory_text: str, apply_grounding: bool = True, vectorset_key: str = None) -> Dict[str, Any]:
-        """Store an atomic memory (Neme) with optional contextual grounding.
+        """Store an atomic memory with optional contextual grounding.
 
         In Minsky's framework, this creates a fundamental memory unit that
         can later be activated and combined with other Memories to form
         complex mental states (K-lines).
 
         Args:
-            memory_text: The memory text to store as a Neme
+            memory_text: The memory text to store 
             apply_grounding: Whether to apply contextual grounding
             vectorset_key: Optional vectorset key to use instead of the instance default
 
@@ -106,7 +106,7 @@ class MemoryAgent:
         """
         return self.core.store_memory(memory_text, apply_grounding, vectorset_key)
 
-    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> Dict[str, Any]:
         """Search for relevant memories using vector similarity.
 
         This operation finds Memories (atomic memories) that can be activated together for cognitive tasks.
@@ -119,29 +119,8 @@ class MemoryAgent:
             vectorset_key: Optional vectorset key to use instead of the instance default
 
         Returns:
-            List of matching memories with metadata and relevance scores that meet the minimum similarity threshold
-        """
-        result = self.core.search_memories(query, top_k, filterBy, min_similarity, vectorset_key)
-        # For backward compatibility, return just the memories list
-        # The filtering info is available in the full result if needed
-        return result['memories'] if isinstance(result, dict) else result
-
-    def search_memories_with_filtering_info(self, query: str, top_k: int = 10, filterBy: str = None, min_similarity: float = 0.7, vectorset_key: str = None) -> Dict[str, Any]:
-        """Search for relevant memories and return full results including filtering information.
-
-        This method returns the complete search results including information about
-        which memories were included/excluded based on the similarity threshold.
-
-        Args:
-            query: Search query to find relevant memories
-            top_k: Number of memories to return
-            filterBy: Optional filter expression
-            min_similarity: Minimum similarity score threshold (0.0-1.0, default: 0.7)
-            vectorset_key: Optional vectorset key to use instead of the instance default
-
-        Returns:
             Dictionary containing:
-            - memories: List of matching memories
+            - memories: List of matching memories with metadata and relevance scores that meet the minimum similarity threshold
             - filtering_info: Information about included/excluded memories
         """
         return self.core.search_memories(query, top_k, filterBy, min_similarity, vectorset_key)
@@ -280,7 +259,8 @@ class MemoryAgent:
         Returns:
             Formatted string representation of the mental state
         """
-        memories = self.search_memories(query, top_k, min_similarity=min_similarity)
+        search_result = self.search_memories(query, top_k, min_similarity=min_similarity)
+        memories = search_result['memories']
 
         # Construct K-line (mental state) from memories
         kline_result = self.construct_kline(query, memories)
@@ -517,7 +497,7 @@ def main():
                 if 'error' in info:
                     print(f"❌ {info['error']}")
                 else:
-                    print(f"🧠 Total Memories (Atomic Memories): {info['memory_count']}")
+                    print(f"🧠 Total Memories: {info['memory_count']}")
                     print(f"🔢 Vector Dimension: {info['vector_dimension']}")
                     print(f"🗃️  VectorSet Name: {info['vectorset_name']}")
                     print(f"🤖 Embedding Model: {info['embedding_model']}")
