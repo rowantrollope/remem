@@ -1,0 +1,129 @@
+{
+  "examples": {
+    "openai_ada_002": {
+      "description": "OpenAI text-embedding-ada-002 (default, legacy)",
+      "config": {
+        "embedding": {
+          "provider": "openai",
+          "model": "text-embedding-ada-002",
+          "dimension": 1536,
+          "api_key": "your-openai-api-key",
+          "timeout": 30
+        }
+      }
+    },
+    "openai_3_small": {
+      "description": "OpenAI text-embedding-3-small (newer, cost-effective)",
+      "config": {
+        "embedding": {
+          "provider": "openai",
+          "model": "text-embedding-3-small",
+          "dimension": 1536,
+          "api_key": "your-openai-api-key",
+          "timeout": 30
+        }
+      }
+    },
+    "openai_3_large": {
+      "description": "OpenAI text-embedding-3-large (highest quality)",
+      "config": {
+        "embedding": {
+          "provider": "openai",
+          "model": "text-embedding-3-large",
+          "dimension": 3072,
+          "api_key": "your-openai-api-key",
+          "timeout": 30
+        }
+      }
+    },
+    "ollama_nomic": {
+      "description": "Ollama with nomic-embed-text (local, fast)",
+      "config": {
+        "embedding": {
+          "provider": "ollama",
+          "model": "nomic-embed-text",
+          "dimension": 768,
+          "base_url": "http://localhost:11434",
+          "timeout": 30
+        }
+      }
+    },
+    "ollama_mxbai": {
+      "description": "Ollama with mxbai-embed-large (local, high quality)",
+      "config": {
+        "embedding": {
+          "provider": "ollama",
+          "model": "mxbai-embed-large",
+          "dimension": 1024,
+          "base_url": "http://localhost:11434",
+          "timeout": 30
+        }
+      }
+    },
+    "ollama_remote": {
+      "description": "Remote Ollama server with custom embedding model",
+      "config": {
+        "embedding": {
+          "provider": "ollama",
+          "model": "all-minilm",
+          "dimension": 384,
+          "base_url": "http://your-ollama-server:11434",
+          "timeout": 60
+        }
+      }
+    }
+  },
+  "usage_instructions": {
+    "api_configuration": {
+      "description": "Configure via API endpoints",
+      "steps": [
+        "1. GET /api/config to see current configuration",
+        "2. PUT /api/config with your desired embedding configuration",
+        "3. POST /api/config/test to validate embedding setup",
+        "4. POST /api/config/reload to apply changes"
+      ]
+    },
+    "environment_variables": {
+      "description": "Set embedding configuration via environment variables",
+      "variables": {
+        "EMBEDDING_PROVIDER": "openai or ollama",
+        "EMBEDDING_MODEL": "Model name (e.g., text-embedding-ada-002, nomic-embed-text)",
+        "EMBEDDING_DIMENSION": "Vector dimension (e.g., 1536, 768)",
+        "EMBEDDING_BASE_URL": "Base URL for Ollama (e.g., http://localhost:11434)",
+        "EMBEDDING_API_KEY": "API key for OpenAI (falls back to OPENAI_API_KEY)",
+        "EMBEDDING_TIMEOUT": "Request timeout in seconds (default: 30)"
+      }
+    },
+    "model_recommendations": {
+      "openai": {
+        "cost_effective": "text-embedding-3-small (1536 dimensions)",
+        "high_quality": "text-embedding-3-large (3072 dimensions)",
+        "legacy": "text-embedding-ada-002 (1536 dimensions)"
+      },
+      "ollama": {
+        "fast_local": "nomic-embed-text (768 dimensions)",
+        "balanced": "mxbai-embed-large (1024 dimensions)",
+        "lightweight": "all-minilm (384 dimensions)"
+      }
+    },
+    "dimension_considerations": {
+      "description": "Vector dimensions affect memory usage and search quality",
+      "guidelines": [
+        "Higher dimensions generally provide better semantic understanding",
+        "Lower dimensions use less memory and are faster to compute",
+        "Dimension must match the model's actual output dimension",
+        "Changing dimensions requires rebuilding existing vector stores"
+      ]
+    }
+  },
+  "testing": {
+    "test_openai": {
+      "description": "Test OpenAI embedding configuration",
+      "curl_example": "curl -X POST http://localhost:5001/api/config/test -H 'Content-Type: application/json' -d '{\"embedding\": {\"provider\": \"openai\", \"model\": \"text-embedding-3-small\", \"dimension\": 1536, \"api_key\": \"your-key\"}}'"
+    },
+    "test_ollama": {
+      "description": "Test Ollama embedding configuration",
+      "curl_example": "curl -X POST http://localhost:5001/api/config/test -H 'Content-Type: application/json' -d '{\"embedding\": {\"provider\": \"ollama\", \"model\": \"nomic-embed-text\", \"dimension\": 768, \"base_url\": \"http://localhost:11434\"}}'"
+    }
+  }
+}

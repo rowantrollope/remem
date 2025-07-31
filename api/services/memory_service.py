@@ -151,7 +151,7 @@ class MemoryService:
                     'vector_dimension': dimension,
                     'vectorset_name': vectorstore_name,
                     'vectorset_info': vinfo_dict,
-                    'embedding_model': 'text-embedding-ada-002',
+                    'embedding_model': f"{self.memory_agent.memory_agent.core.embedding_config.provider}:{self.memory_agent.memory_agent.core.embedding_config.model}",
                     'redis_host': redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                     'redis_port': redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
                     'timestamp': get_current_timestamp()
@@ -164,7 +164,7 @@ class MemoryService:
                     'vector_dimension': 0,
                     'vectorset_name': vectorstore_name,
                     'vectorset_info': {},
-                    'embedding_model': 'text-embedding-ada-002',
+                    'embedding_model': f"{self.memory_agent.memory_agent.core.embedding_config.provider}:{self.memory_agent.memory_agent.core.embedding_config.model}",
                     'redis_host': redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                     'redis_port': redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
                     'timestamp': get_current_timestamp(),

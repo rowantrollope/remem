@@ -16,6 +16,7 @@ Usage:
 python memory_agent.py
 """
 
+from typing import Dict, Any
 from .core import MemoryCore
 from .processing import MemoryProcessing
 from .extraction import MemoryExtraction
@@ -49,7 +50,7 @@ class MemoryAgent:
     """
 
     def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None,
-                 vectorset_key: str = None):
+                 vectorset_key: str = None, app_config: Dict[str, Any] = None):
         """Initialize the memory agent with Minsky-inspired cognitive architecture.
 
         This creates a layered system where:
@@ -65,7 +66,7 @@ class MemoryAgent:
             vectorset_key: Name of the vectorset to use (defaults to "memories")
         """
         # Initialize the core layer (Neme management)
-        self.core = MemoryCore(redis_host, redis_port, redis_db, vectorset_key)
+        self.core = MemoryCore(redis_host, redis_port, redis_db, vectorset_key, app_config=app_config)
 
         # Initialize processing utilities (cognitive tools)
         self.processing = MemoryProcessing()

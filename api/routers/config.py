@@ -42,6 +42,7 @@ async def update_configuration(
         request: Configuration object with any subset of configuration categories:
             - redis: {host, port, db, vectorset_key}
             - llm: {tier1: {provider, model, temperature, max_tokens, base_url, api_key, timeout}, tier2: {...}}
+            - embedding: {provider, model, dimension, base_url, api_key, timeout}
             - openai: {api_key, organization, embedding_model, embedding_dimension, chat_model, temperature}
             - langgraph: {model_name, temperature, system_prompt_enabled}
             - memory_agent: {default_top_k, apply_grounding_default, validation_enabled}
@@ -53,6 +54,23 @@ async def update_configuration(
     """
     updates = request.dict(exclude_unset=True)
     return await config_service.update_configuration(updates)
+
+
+@router.post('/test')
+async def test_configuration(
+    request: ConfigUpdateRequest,
+    config_service: ConfigService = Depends(get_config_service)
+) -> Dict[str, Any]:
+    """Test configuration without applying changes.
+
+    Args:
+        request: Configuration object to test (same format as update)
+
+    Returns:
+        JSON with test results including validation status and connection tests
+    """
+    test_config = request.dict(exclude_unset=True)
+    return await config_service.test_configuration(test_config)
 
 
 @router.post('/reload')

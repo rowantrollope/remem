@@ -33,6 +33,7 @@ load_dotenv()
 sys.path.append('..')
 from llm.llm_manager import get_llm_manager
 from clients.langcache_client import LangCacheClient, CachedLLMClient
+from embedding import create_embedding_client, get_embedding_config_from_app_config
 
 
 class RelevanceConfig:
@@ -96,7 +97,8 @@ class MemoryCore:
     """Low-level memory storage and retrieval with Redis VectorSet and OpenAI embeddings."""
     
     def __init__(self, redis_host: str = None, redis_port: int = None, redis_db: int = None,
-                 vectorset_key: str = None, relevance_config: RelevanceConfig = None):
+                 vectorset_key: str = None, relevance_config: RelevanceConfig = None,
+                 app_config: Dict[str, Any] = None):
         """Initialize the memory core.
 
         Args:
@@ -118,7 +120,18 @@ class MemoryCore:
             print(f"  Port: {redis_port} (from param: {redis_port}, from env: {os.getenv('REDIS_PORT', 'not set')})")
             print(f"  DB: {redis_db}")
 
-        # Initialize OpenAI client
+        # Initialize embedding client
+        if app_config:
+            embedding_config = get_embedding_config_from_app_config(app_config)
+        else:
+            # Fallback to environment variables if no app_config provided
+            from api.core.config import app_config as default_config
+            embedding_config = get_embedding_config_from_app_config(default_config)
+
+        self.embedding_client = create_embedding_client(embedding_config)
+        self.embedding_config = embedding_config
+
+        # Keep OpenAI client for backward compatibility (if needed elsewhere)
         self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         # Initialize LangCache if environment variables are available
@@ -153,7 +166,7 @@ class MemoryCore:
 
         # Constants
         self.VECTORSET_KEY = vectorset_key or "memories"
-        self.EMBEDDING_DIM = 1536  # OpenAI text-embedding-ada-002 dimension
+        self.EMBEDDING_DIM = self.embedding_config.dimension
 
         # Relevance scoring configuration
         self.relevance_config = relevance_config or RelevanceConfig()
@@ -270,20 +283,16 @@ class MemoryCore:
             print(f"🔧 MEMORY: VectorSet '{self.VECTORSET_KEY}' will be created on first memory")
     
     def _get_embedding(self, text: str) -> List[float]:
-        """Get OpenAI embedding for text.
-        
+        """Get embedding for text using configured embedding provider.
+
         Args:
             text: Text to embed
-            
+
         Returns:
             List of embedding values
         """
         try:
-            response = self.openai_client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=text
-            )
-            return response.data[0].embedding
+            return self.embedding_client.get_embedding(text)
         except Exception as e:
             print(f"❌ MEMORY: Error getting embedding: {e}")
             raise
@@ -1029,7 +1038,7 @@ Respond with a JSON object:
                 'vector_dimension': int(dimension) if isinstance(dimension, (int, bytes)) else 0,
                 'vectorset_name': self.VECTORSET_KEY,
                 'vectorset_info': vinfo_dict,
-                'embedding_model': 'text-embedding-ada-002',
+                'embedding_model': f"{self.embedding_config.provider}:{self.embedding_config.model}",
                 'redis_host': self.redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                 'redis_port': self.redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
                 'timestamp': datetime.now(timezone.utc).isoformat()
@@ -1042,7 +1051,7 @@ Respond with a JSON object:
                 'vector_dimension': 0,
                 'vectorset_name': self.VECTORSET_KEY,
                 'vectorset_info': {},
-                'embedding_model': 'text-embedding-ada-002',
+                'embedding_model': f"{self.embedding_config.provider}:{self.embedding_config.model}",
                 'redis_host': self.redis_client.connection_pool.connection_kwargs.get('host', 'unknown'),
                 'redis_port': self.redis_client.connection_pool.connection_kwargs.get('port', 'unknown'),
                 'timestamp': datetime.now(timezone.utc).isoformat(),

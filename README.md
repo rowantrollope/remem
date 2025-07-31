@@ -224,7 +224,7 @@ The memory agent uses a sophisticated multi-layer architecture:
 
 ### 1. Core Memory Layer (`memory/core_agent.py`)
 - **Vector Storage**: Uses Redis VectorSet for semantic memory storage
-- **Embeddings**: OpenAI text-embedding-ada-002 for vector representations
+- **Embeddings**: Configurable embedding providers (OpenAI, Ollama) with multiple model support
 - **Contextual Grounding**: Converts relative references (today, here) to absolute ones
 - **Confidence Analysis**: Sophisticated question answering with confidence scoring
 
@@ -870,7 +870,8 @@ The system now includes a comprehensive **Configuration Management API** that al
 ### Configurable Components
 
 - **Redis**: host, port, database, vector set name
-- **OpenAI**: API key, models, temperature, embedding settings
+- **Embedding**: provider (OpenAI/Ollama), model, dimensions, API settings
+- **OpenAI**: API key, models, temperature, embedding settings (deprecated)
 - **LangGraph**: model selection, temperature, system prompts
 - **Memory Agent**: search parameters, grounding settings, validation
 - **Web Server**: host, port, debug mode, CORS settings
@@ -895,6 +896,50 @@ curl -X POST http://localhost:5001/api/config/test \
 
 # Apply changes
 curl -X POST http://localhost:5001/api/config/reload
+```
+
+### Example: Configure Ollama Embeddings
+
+```bash
+# Configure Ollama embedding provider
+curl -X PUT http://localhost:5001/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "embedding": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimension": 768,
+      "base_url": "http://localhost:11434"
+    }
+  }'
+
+# Test embedding configuration
+curl -X POST http://localhost:5001/api/config/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "embedding": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimension": 768,
+      "base_url": "http://localhost:11434"
+    }
+  }'
+```
+
+### Example: Configure OpenAI Embeddings
+
+```bash
+# Configure OpenAI embedding provider
+curl -X PUT http://localhost:5001/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "embedding": {
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "dimension": 1536,
+      "api_key": "your-openai-api-key"
+    }
+  }'
 ```
 
 See [CONFIG_API.md](CONFIG_API.md) for complete documentation and examples.

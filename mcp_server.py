@@ -674,7 +674,7 @@ async def delete_memory(
         return "Memory agent not initialized."
 
     try:
-        success = memory_agent.delete_memory(memory_id, vectorstore_key=vectorstore_name)
+        success = memory_agent.delete_memory(memory_id, vectorset_key=vectorstore_name)
 
         if success:
             return f"Successfully deleted memory with ID: {memory_id}"
@@ -705,7 +705,7 @@ async def clear_all_memories(
         return "⚠️ This will delete ALL memories from the vectorstore. To confirm, call this tool with confirm=True"
 
     try:
-        result = memory_agent.clear_all_memories(vectorstore_key=vectorstore_name)
+        result = memory_agent.clear_all_memories(vectorset_key=vectorstore_name)
 
         if result.get('success'):
             memories_deleted = result.get('memories_deleted', 0)

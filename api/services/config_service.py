@@ -90,6 +90,14 @@ class ConfigService:
                 if openai_changes:
                     requires_restart = True
 
+            # Update Embedding configuration
+            if 'embedding' in updates:
+                embedding_config = updates['embedding']
+                embedding_changes = self._update_embedding_config(config, embedding_config)
+                changes_made.extend(embedding_changes)
+                if embedding_changes:
+                    requires_restart = True
+
             # Update LangGraph configuration
             if 'langgraph' in updates:
                 langgraph_config = updates['langgraph']
@@ -159,6 +167,33 @@ class ConfigService:
                 response_data['message'] = 'No changes were made to the configuration.'
 
             return response_data
+
+        except Exception as e:
+            raise server_error(str(e))
+
+    async def test_configuration(self, test_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Test configuration without applying changes."""
+        try:
+            test_results = {
+                'valid': True,
+                'tests': {},
+                'errors': [],
+                'warnings': []
+            }
+
+            # Test embedding configuration if provided
+            if 'embedding' in test_config:
+                embedding_test = await self._test_embedding_config(test_config['embedding'])
+                test_results['tests']['embedding'] = embedding_test
+                if not embedding_test['valid']:
+                    test_results['valid'] = False
+                    test_results['errors'].extend(embedding_test.get('errors', []))
+
+            return {
+                'success': True,
+                'test_results': test_results,
+                'timestamp': get_current_timestamp()
+            }
 
         except Exception as e:
             raise server_error(str(e))
@@ -264,6 +299,95 @@ class ConfigService:
                     changes.append(f"openai.{key}: {old_value} → {new_value}")
 
         return changes
+
+    def _update_embedding_config(self, config: Dict[str, Any], embedding_config: Dict[str, Any]) -> List[str]:
+        """Update Embedding configuration section."""
+        changes = []
+
+        # Handle string fields
+        for key in ['provider', 'model', 'base_url', 'api_key']:
+            if key in embedding_config:
+                old_value = config['embedding'].get(key)
+                new_value = embedding_config[key]
+
+                if old_value != new_value:
+                    config['embedding'][key] = new_value
+                    if key == 'api_key':
+                        # Mask API key in logs
+                        from ..core.utils import mask_api_key
+                        masked_old = mask_api_key(old_value)
+                        masked_new = mask_api_key(new_value)
+                        changes.append(f"embedding.{key}: {masked_old} → {masked_new}")
+                    else:
+                        changes.append(f"embedding.{key}: {old_value} → {new_value}")
+
+        # Handle numeric fields
+        for key in ['dimension', 'timeout']:
+            if key in embedding_config:
+                old_value = config['embedding'].get(key)
+                new_value = validate_positive_integer(embedding_config[key], f'Embedding {key}')
+
+                if old_value != new_value:
+                    config['embedding'][key] = new_value
+                    changes.append(f"embedding.{key}: {old_value} → {new_value}")
+
+        # Validate provider
+        if 'provider' in embedding_config:
+            provider = embedding_config['provider'].lower()
+            if provider not in ['openai', 'ollama']:
+                raise validation_error(f'Embedding provider must be "openai" or "ollama", got "{provider}"')
+
+        return changes
+
+    async def _test_embedding_config(self, embedding_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Test embedding configuration."""
+        test_result = {
+            'valid': True,
+            'errors': [],
+            'warnings': [],
+            'connection_test': None
+        }
+
+        try:
+            # Import embedding modules
+            from embedding import EmbeddingConfig, create_embedding_client
+
+            # Create embedding config from test data
+            config = EmbeddingConfig(
+                provider=embedding_config.get('provider', 'openai'),
+                model=embedding_config.get('model', 'text-embedding-ada-002'),
+                dimension=embedding_config.get('dimension', 1536),
+                base_url=embedding_config.get('base_url'),
+                api_key=embedding_config.get('api_key'),
+                timeout=embedding_config.get('timeout', 30)
+            )
+
+            # Validate provider
+            if config.provider.lower() not in ['openai', 'ollama']:
+                test_result['valid'] = False
+                test_result['errors'].append(f'Invalid embedding provider: {config.provider}')
+                return test_result
+
+            # Create and test embedding client
+            embedding_client = create_embedding_client(config)
+            connection_test = embedding_client.test_connection()
+            test_result['connection_test'] = connection_test
+
+            if not connection_test['success']:
+                test_result['valid'] = False
+                test_result['errors'].append(f"Embedding connection failed: {connection_test.get('error', 'Unknown error')}")
+
+            # Check dimension mismatch
+            if connection_test.get('dimension_match') is False:
+                test_result['warnings'].append(
+                    f"Dimension mismatch: configured {config.dimension}, actual {connection_test.get('actual_dimension')}"
+                )
+
+        except Exception as e:
+            test_result['valid'] = False
+            test_result['errors'].append(f"Embedding test error: {str(e)}")
+
+        return test_result
 
     def _update_langgraph_config(self, config: Dict[str, Any], langgraph_config: Dict[str, Any]) -> List[str]:
         """Update LangGraph configuration section."""

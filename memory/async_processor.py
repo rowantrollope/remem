@@ -115,11 +115,14 @@ class AsyncMemoryProcessor:
     def get_memory_agent(self, vectorstore_name: str) -> MemoryAgent:
         """Get or create a memory agent for the specified vectorstore."""
         if vectorstore_name not in self.memory_agents:
+            # Import app_config here to avoid circular imports
+            from api.core.config import app_config
             self.memory_agents[vectorstore_name] = MemoryAgent(
                 redis_host=self.redis_host,
                 redis_port=self.redis_port,
                 redis_db=self.redis_db,
-                vectorset_key=vectorstore_name
+                vectorset_key=vectorstore_name,
+                app_config=app_config
             )
         return self.memory_agents[vectorstore_name]
     

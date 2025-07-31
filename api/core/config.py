@@ -35,11 +35,19 @@ app_config: Dict[str, Any] = {
             "timeout": 30
         }
     },
+    "embedding": {
+        "provider": os.getenv("EMBEDDING_PROVIDER", "openai"),  # "openai" or "ollama"
+        "model": os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002"),
+        "dimension": int(os.getenv("EMBEDDING_DIMENSION", "1536")),
+        "base_url": os.getenv("EMBEDDING_BASE_URL", None),  # For Ollama: "http://localhost:11434"
+        "api_key": os.getenv("EMBEDDING_API_KEY", "") or os.getenv("OPENAI_API_KEY", ""),
+        "timeout": int(os.getenv("EMBEDDING_TIMEOUT", "30"))
+    },
     "openai": {
         "api_key": os.getenv("OPENAI_API_KEY", ""),
         "organization": os.getenv("OPENAI_ORG_ID", ""),
-        "embedding_model": "text-embedding-ada-002",
-        "embedding_dimension": 1536,
+        "embedding_model": "text-embedding-ada-002",  # Deprecated: use embedding.model instead
+        "embedding_dimension": 1536,  # Deprecated: use embedding.dimension instead
         "chat_model": "gpt-3.5-turbo",
         "temperature": 0.1
     },

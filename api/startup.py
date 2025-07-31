@@ -50,7 +50,8 @@ def init_memory_agent():
             redis_host=app_config["redis"]["host"],
             redis_port=app_config["redis"]["port"],
             redis_db=app_config["redis"]["db"],
-            vectorset_key=app_config["redis"]["vectorset_key"]
+            vectorset_key=app_config["redis"]["vectorset_key"],
+            app_config=app_config
         )
 
         # Create LangGraph agent with current OpenAI configuration
