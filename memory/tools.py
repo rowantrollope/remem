@@ -1,10 +1,11 @@
 """
 Memory tools for the LangGraph Memory Agent.
+Uses lean-core pattern: LangChain-Core interfaces with direct implementations.
 """
 
-from langchain.tools import tool
-from typing import Dict, Any, List, Optional
+from typing import Optional
 import json
+from pydantic import BaseModel, Field
 
 
 # Memory Tools - Global memory agent instance will be set by the LangGraph agent
@@ -15,7 +16,6 @@ def set_memory_agent(agent):
     global _memory_agent
     _memory_agent = agent
 
-@tool
 def store_memory(memory_text: str, apply_grounding: bool = True) -> str:
     """Store a new memory with optional contextual grounding.
 
@@ -47,7 +47,7 @@ def store_memory(memory_text: str, apply_grounding: bool = True) -> str:
     except Exception as e:
         return f"Error storing memory: {str(e)}"
 
-@tool
+
 def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str:
     """Search for relevant memories using vector similarity.
 
@@ -98,7 +98,7 @@ def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str
     except Exception as e:
         return f"Error searching memories: {str(e)}"
 
-@tool
+
 def set_context(location: str = None, activity: str = None, people: str = None) -> str:
     """Set current context for memory grounding.
 
@@ -124,7 +124,7 @@ def set_context(location: str = None, activity: str = None, people: str = None) 
     except Exception as e:
         return f"Error setting context: {str(e)}"
 
-@tool
+
 def get_memory_stats() -> str:
     """Get statistics about stored memories.
 
@@ -146,7 +146,7 @@ def get_memory_stats() -> str:
     except Exception as e:
         return f"Error getting memory stats: {str(e)}"
 
-@tool
+
 def analyze_question_type(question: str) -> str:
     """Analyze what type of question this is to determine the best approach.
 
@@ -182,7 +182,7 @@ def analyze_question_type(question: str) -> str:
 
     return json.dumps(analysis, indent=2)
 
-@tool
+
 def answer_with_confidence(question: str, top_k: int = 5, filter_expr: str = None) -> str:
     """Answer a question with sophisticated confidence analysis and structured response.
 
@@ -209,7 +209,7 @@ def answer_with_confidence(question: str, top_k: int = 5, filter_expr: str = Non
     except Exception as e:
         return json.dumps({"error": f"Error answering question: {str(e)}"})
 
-@tool
+
 def format_memory_results(memories_json: str) -> str:
     """Format memory search results for display.
 
@@ -246,7 +246,7 @@ def format_memory_results(memories_json: str) -> str:
     except Exception as e:
         return f"Error formatting memories: {str(e)}"
 
-@tool
+
 def extract_and_store_memories(raw_input: str, context_prompt: str, existing_memories_json: str = None) -> str:
     """Extract and store valuable memories from conversational data using intelligent LLM analysis.
 
@@ -301,7 +301,7 @@ def extract_and_store_memories(raw_input: str, context_prompt: str, existing_mem
     except Exception as e:
         return f"Error extracting memories: {str(e)}"
 
-@tool
+
 def find_duplicate_memories(similarity_threshold: float = 0.9) -> str:
     """Find potential duplicate memories in the system.
 
@@ -336,7 +336,7 @@ def find_duplicate_memories(similarity_threshold: float = 0.9) -> str:
     except Exception as e:
         return f"Error finding duplicates: {str(e)}"
 
-@tool
+
 def delete_memory(memory_id: str) -> str:
     """Delete a specific memory by its ID.
 
@@ -359,7 +359,7 @@ def delete_memory(memory_id: str) -> str:
     except Exception as e:
         return f"Error deleting memory: {str(e)}"
 
-@tool
+
 def clear_all_memories() -> str:
     """Clear all stored memories from the current vectorstore.
 
@@ -383,17 +383,69 @@ def clear_all_memories() -> str:
     except Exception as e:
         return f"Error clearing memories: {str(e)}"
 
-# List of available memory tools
+# Pydantic schemas for tool arguments
+class StoreMemoryArgs(BaseModel):
+    memory_text: str = Field(description="The memory text to store")
+    apply_grounding: bool = Field(default=True, description="Whether to apply contextual grounding")
+
+class SearchMemoriesArgs(BaseModel):
+    query: str = Field(description="Search query text")
+    top_k: int = Field(default=10, description="Number of top results to return")
+    filter_expr: Optional[str] = Field(default=None, description="Optional filter expression")
+
+class SetContextArgs(BaseModel):
+    location: Optional[str] = Field(default=None, description="Current location")
+    activity: Optional[str] = Field(default=None, description="Current activity")
+    people: Optional[str] = Field(default=None, description="Comma-separated list of people present")
+
+class GetMemoryStatsArgs(BaseModel):
+    pass  # No arguments needed
+
+# Simple tool classes that provide the interface our agent expects
+class StoreMemoryTool:
+    name = "store_memory"
+    description = "Store a new memory with optional contextual grounding."
+    args_schema = StoreMemoryArgs
+
+    def invoke(self, args: dict) -> str:
+        memory_text = args.get("memory_text", "")
+        apply_grounding = args.get("apply_grounding", True)
+        return store_memory(memory_text, apply_grounding)
+
+class SearchMemoriesTool:
+    name = "search_memories"
+    description = "Search for relevant memories using vector similarity."
+    args_schema = SearchMemoriesArgs
+
+    def invoke(self, args: dict) -> str:
+        query = args.get("query", "")
+        top_k = args.get("top_k", 10)
+        filter_expr = args.get("filter_expr")
+        return search_memories(query, top_k, filter_expr)
+
+class SetContextTool:
+    name = "set_context"
+    description = "Set current context for memory grounding."
+    args_schema = SetContextArgs
+
+    def invoke(self, args: dict) -> str:
+        location = args.get("location")
+        activity = args.get("activity")
+        people = args.get("people")
+        return set_context(location, activity, people)
+
+class GetMemoryStatsTool:
+    name = "get_memory_stats"
+    description = "Get statistics about stored memories."
+    args_schema = GetMemoryStatsArgs
+
+    def invoke(self, args: dict) -> str:
+        return get_memory_stats()
+
+# List of available memory tools (using LangChain-Core BaseTool)
 AVAILABLE_TOOLS = [
-    store_memory,
-    search_memories,
-    set_context,
-    get_memory_stats,
-    analyze_question_type,
-    answer_with_confidence,
-    format_memory_results,
-    extract_and_store_memories,
-    find_duplicate_memories,
-    delete_memory,
-    clear_all_memories
+    StoreMemoryTool(),
+    SearchMemoriesTool(),
+    SetContextTool(),
+    GetMemoryStatsTool()
 ]

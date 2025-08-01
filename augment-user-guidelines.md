@@ -11,6 +11,7 @@ We are developing a new memory system for Augment called REMEM-MEMORY. You must 
 - Use this data to inform your responses throughout the session
 
 **During Session:**
+- For EVERY PROMPT you must consult remem-memory to find any relevant memories that might be useful to construct a mental state for to act upon.
 - Before providing coding advice, check if relevant preferences/patterns exist
 - When user mentions unfamiliar concepts, search for prior context
 - When debugging, look for similar issues previously encountered

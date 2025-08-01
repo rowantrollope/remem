@@ -10,20 +10,127 @@ import os
 import json
 from typing import Dict, Any, List
 from dotenv import load_dotenv
+import openai
 
 from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import Runnable
 
 from .core_agent import MemoryAgent
 from .tools import AVAILABLE_TOOLS, set_memory_agent
 from .debug_utils import (
-    debug_print, memory_extraction_print, format_user_response,
-    is_debug_enabled, section_header, colorize, Colors, error_print, success_print, info_print
+    format_user_response, section_header, colorize, Colors, error_print, success_print, info_print
 )
 
 # Load environment variables
 load_dotenv()
+
+
+class DirectOpenAIRunnable(Runnable):
+    """Custom Runnable that uses direct OpenAI API calls instead of LangChain ChatOpenAI.
+
+    This implements the lean-core pattern: keep LangChain-Core interfaces but use
+    direct SDK calls for better performance and fewer dependencies.
+    """
+
+    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.1, **kwargs):
+        self.model = model
+        self.temperature = temperature
+        self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.functions = kwargs.get('functions', [])
+
+    def invoke(self, input_data, config=None):
+        """Invoke the OpenAI API directly with LangChain message format."""
+        if isinstance(input_data, list):
+            messages = input_data
+        else:
+            messages = input_data.get("messages", [])
+
+        # Convert LangChain messages to OpenAI format
+        openai_messages = []
+        for msg in messages:
+            if hasattr(msg, 'content'):
+                role = "user"
+                if hasattr(msg, 'type'):
+                    if msg.type == "system":
+                        role = "system"
+                    elif msg.type == "ai":
+                        role = "assistant"
+                    elif msg.type == "human":
+                        role = "user"
+
+                openai_messages.append({
+                    "role": role,
+                    "content": msg.content
+                })
+
+        # Call OpenAI API directly
+        try:
+            kwargs = {
+                "model": self.model,
+                "messages": openai_messages,
+                "temperature": self.temperature
+            }
+
+            # Add function calling if functions are provided
+            if self.functions:
+                kwargs["functions"] = self.functions
+                kwargs["function_call"] = "auto"
+
+            response = self.client.chat.completions.create(**kwargs)
+
+            # Convert back to LangChain format
+            content = response.choices[0].message.content or ""
+            ai_message = AIMessage(content=content)
+
+            # Handle function calls
+            if response.choices[0].message.function_call:
+                ai_message.additional_kwargs = {
+                    "function_call": {
+                        "name": response.choices[0].message.function_call.name,
+                        "arguments": response.choices[0].message.function_call.arguments
+                    }
+                }
+
+            return ai_message
+
+        except Exception as e:
+            error_print(f"OpenAI API error: {e}")
+            return AIMessage(content=f"Error: {str(e)}")
+
+    def bind_tools(self, tools):
+        """Bind tools/functions to this runnable."""
+        functions = []
+        for tool in tools:
+            function_def = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+
+            # Add parameters if the tool has them
+            if hasattr(tool, 'args_schema') and tool.args_schema:
+                try:
+                    schema = tool.args_schema.model_json_schema()
+                except AttributeError:
+                    schema = tool.args_schema.schema()
+
+                if 'properties' in schema:
+                    function_def["parameters"]["properties"] = schema['properties']
+                if 'required' in schema:
+                    function_def["parameters"]["required"] = schema['required']
+
+            functions.append(function_def)
+
+        return DirectOpenAIRunnable(
+            model=self.model,
+            temperature=self.temperature,
+            functions=functions
+        )
 
 
 
@@ -45,25 +152,19 @@ class LangGraphMemoryAgent:
         # Set the global memory agent for tools
         set_memory_agent(self.memory_agent)
         
-        # Initialize the OpenAI model
-        self.llm = ChatOpenAI(
+        # Initialize the direct OpenAI runnable (lean-core pattern)
+        self.llm = DirectOpenAIRunnable(
             model=model_name,
-            temperature=temperature,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            temperature=temperature
         )
-        
+
         # Bind tools to the model
         self.llm_with_tools = self.llm.bind_tools(AVAILABLE_TOOLS)
 
         # Create a tool mapping for execution
         self.tools_by_name = {tool.name: tool for tool in AVAILABLE_TOOLS}
 
-        # Conversation buffer for memory extraction
-        self.conversation_buffer = []
-        self.extraction_threshold = 1  # Extract after 1 meaningful exchange to capture conversational memories
-        self.extraction_context = "I am a personal assistant. Extract only significant new user information like preferences, constraints, or important personal details that would be valuable for future assistance. Be selective and avoid extracting minor details or temporary information."
-
-        # Note: Duplicate prevention now handled by context-aware extraction
+        # Note: Automatic memory extraction removed - memories should only be stored when explicitly requested
 
         # Conversation history for LangGraph context
         self.conversation_history = []  # Store LangGraph messages for context
@@ -240,39 +341,42 @@ For every user request:
         messages = state["messages"]
         last_message = messages[-1]
 
-        # Execute tool calls
-        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            for tool_call in last_message.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
-                tool_call_id = tool_call["id"]
+        # Execute function calls (from our DirectOpenAIRunnable)
+        if hasattr(last_message, 'additional_kwargs') and 'function_call' in last_message.additional_kwargs:
+            function_call = last_message.additional_kwargs['function_call']
+            tool_name = function_call["name"]
 
-                # Execute the tool
-                if tool_name in self.tools_by_name:
-                    try:
-                        tool = self.tools_by_name[tool_name]
-                        result = tool.invoke(tool_args)
+            try:
+                tool_args = json.loads(function_call["arguments"])
+            except json.JSONDecodeError:
+                tool_args = {}
 
-                        # Create tool message
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call_id
-                        )
-                        messages.append(tool_message)
-                    except Exception as e:
-                        # Handle tool execution errors
-                        error_message = ToolMessage(
-                            content=f"Error executing {tool_name}: {str(e)}",
-                            tool_call_id=tool_call_id
-                        )
-                        messages.append(error_message)
-                else:
-                    # Handle unknown tool
+            # Execute the tool
+            if tool_name in self.tools_by_name:
+                try:
+                    tool = self.tools_by_name[tool_name]
+                    result = tool.invoke(tool_args)
+
+                    # Create tool message (using LangChain-Core ToolMessage)
+                    tool_message = ToolMessage(
+                        content=str(result),
+                        tool_call_id=tool_name  # Use tool name as ID
+                    )
+                    messages.append(tool_message)
+                except Exception as e:
+                    # Handle tool execution errors
                     error_message = ToolMessage(
-                        content=f"Unknown tool: {tool_name}",
-                        tool_call_id=tool_call_id
+                        content=f"Error executing {tool_name}: {str(e)}",
+                        tool_call_id=tool_name
                     )
                     messages.append(error_message)
+            else:
+                # Handle unknown tool
+                error_message = ToolMessage(
+                    content=f"Unknown tool: {tool_name}",
+                    tool_call_id=tool_name
+                )
+                messages.append(error_message)
 
         state["messages"] = messages
         return state
@@ -281,9 +385,12 @@ For every user request:
         """Determine whether to use tools or synthesize response."""
         messages = state["messages"]
         last_message = messages[-1]
-        
-        # If the last message has tool calls, use tools
-        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+
+        # Check for function calls from our DirectOpenAIRunnable
+        if hasattr(last_message, 'additional_kwargs') and 'function_call' in last_message.additional_kwargs:
+            return "use_tools"
+        # Legacy check for tool_calls (in case we switch back)
+        elif hasattr(last_message, 'tool_calls') and last_message.tool_calls:
             return "use_tools"
         else:
             return "synthesize"
@@ -306,12 +413,7 @@ For every user request:
         """
         # Processing user input silently
 
-        # Add to conversation buffer
-        self.conversation_buffer.append({
-            "sender": "user",
-            "text": user_input,
-            "timestamp": self._get_timestamp()
-        })
+        # Note: Conversation buffer removed - no automatic memory extraction
 
         # Add current user message to conversation history
         current_user_message = HumanMessage(content=user_input)
@@ -344,11 +446,7 @@ For every user request:
             response = str(final_message)
 
         # Add assistant response to buffer
-        self.conversation_buffer.append({
-            "sender": "assistant",
-            "text": response,
-            "timestamp": self._get_timestamp()
-        })
+        # Note: Assistant response buffer removed - no automatic memory extraction
 
         # Add both user message and assistant response to conversation history
         self.conversation_history.append(current_user_message)
@@ -358,8 +456,7 @@ For every user request:
         if len(self.conversation_history) > self.max_history_length:
             self.conversation_history = self.conversation_history[-self.max_history_length:]
 
-        # Check if we should extract memories from recent conversation
-        self._check_and_extract_memories()
+        # Note: Automatic memory extraction removed - memories should only be stored when explicitly requested
 
         return response
 
@@ -368,57 +465,11 @@ For every user request:
         from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
 
-    def _check_and_extract_memories(self):
-        """Extract memories from conversation buffer when threshold is met."""
-        # Only extract if we have enough conversation
-        if len(self.conversation_buffer) < self.extraction_threshold * 2:  # *2 for user+assistant pairs
-            return
-
-        # Extract memories from recent conversation using context-aware approach
-        recent_messages = self.conversation_buffer[-4:]  # Last 2 exchanges
-        try:
-            conversation_text = self._format_conversation_for_extraction(recent_messages)
-
-            # STEP 1: Search for existing relevant memories first
-            debug_print("Searching for existing relevant memories...", "MEMORY")
-
-            search_result = self.memory_agent.search_memories(
-                conversation_text,
-                top_k=5,
-                min_similarity=0.8  # Higher threshold to be more selective
-            )
-            existing_memories = search_result['memories']
-
-            if is_debug_enabled():
-                if existing_memories:
-                    debug_print(f"Found {len(existing_memories)} existing relevant memories", "MEMORY")
-                    for i, mem in enumerate(existing_memories[:3], 1):  # Show first 3
-                        mem_text = mem.get('text', mem.get('final_text', ''))
-                        debug_print(f"{i}. {mem_text}", "📝")
-                else:
-                    debug_print("No existing relevant memories found", "MEMORY")
-
-            # STEP 2: Extract memories (LLM will determine if anything is worth extracting)
-            result = self.memory_agent.extract_and_store_memories(
-                raw_input=conversation_text,
-                context_prompt=self.extraction_context,
-                apply_grounding=True,
-                existing_memories=existing_memories  # Pass existing memories for context
-            )
-
-            memory_extraction_print(result["total_extracted"], "conversation")
-
-            # Clear processed messages from buffer (keep last 2 for context)
-            self.conversation_buffer = self.conversation_buffer[-2:]
-
-        except Exception as e:
-            print(f"⚠️ MEMORY: Auto-extraction failed: {e}")
+    # Note: _check_and_extract_memories method removed - no automatic memory extraction
 
 
 
-    def _format_conversation_for_extraction(self, messages) -> str:
-        """Format conversation messages for memory extraction."""
-        return '\n'.join([f"{msg['sender'].title()}: {msg['text']}" for msg in messages])
+    # Note: Administrative command filtering and conversation formatting methods removed - no automatic extraction
 
     def _would_create_duplicates(self, conversation_text: str) -> bool:
         """Check if the conversation text would likely create duplicate memories."""
