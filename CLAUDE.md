@@ -53,7 +53,7 @@ cp .env.example .env
 
 ### Core System
 - **memory/core.py**: Core memory operations with Redis VectorSet
-- **memory/agent.py**: Main LangGraph memory agent workflow
+- **memory/agent.py**: Main memory agent with direct ChatOpenAI tool calling
 - **memory/tools.py**: LangChain tools for memory operations
 - **api/**: FastAPI web server with REST endpoints
 - **cli.py**: Command-line interface
@@ -63,7 +63,7 @@ cp .env.example .env
 ### Key Components
 - **Vector Storage**: Redis VectorSet for semantic similarity search
 - **Embeddings**: Configurable providers (OpenAI text-embedding-3-small, Ollama nomic-embed-text)
-- **LangGraph Workflow**: Multi-step reasoning with tool orchestration
+- **Direct Tool Calling**: Clean, reliable tool execution with proper iteration limits
 - **Contextual Grounding**: Automatic resolution of relative time/location references
 - **Configuration Management**: Runtime configuration via API endpoints
 
@@ -118,7 +118,7 @@ make test
 The system supports runtime configuration changes via API. Key configurable components:
 - Redis connection settings
 - Embedding provider (OpenAI/Ollama) and models
-- LangGraph model selection and parameters
+- ChatOpenAI model selection and parameters
 - Memory agent search and grounding settings
 
 ## Entry Points
@@ -126,4 +126,4 @@ The system supports runtime configuration changes via API. Key configurable comp
 1. **CLI**: `python cli.py` - Interactive memory operations
 2. **Web API**: `python web_app.py` - REST API + web interface on port 5001
 3. **MCP Server**: `python mcp_server.py` - Universal AI integration
-4. **LangGraph**: Import `LangGraphMemoryAgent` for programmatic use
+4. **Programmatic**: Import `MemoryAgentChat` for direct use

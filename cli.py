@@ -1,11 +1,11 @@
 """
-CLI entry point for the LangGraph Memory Agent.
+CLI entry point for the Memory Agent.
 """
 
 import os
 import sys
 from dotenv import load_dotenv
-from memory.agent import LangGraphMemoryAgent
+from memory.agent import MemoryAgentChat
 from memory.debug_utils import (
     section_header, format_user_response, success_print, error_print,
     info_print, colorize, Colors
@@ -169,7 +169,7 @@ def get_custom_vectorstore_name():
 def show_cli_help():
     """Show command-line help information."""
     help_text = f"""
-{colorize('🧠 LangGraph Memory Agent - Command Line Help', Colors.BRIGHT_CYAN)}
+{colorize('🧠 Memory Agent - Command Line Help', Colors.BRIGHT_CYAN)}
 {colorize('=' * 60, Colors.GRAY)}
 
 {colorize('USAGE:', Colors.BRIGHT_YELLOW)}
@@ -200,11 +200,11 @@ def show_cli_help():
   {colorize('quit', Colors.WHITE)}        Exit the program
 
 {colorize('FEATURES:', Colors.BRIGHT_YELLOW)}
-  • Automatic memory extraction from conversations
-  • Intelligent question answering with confidence scoring
+  • Intelligent tool-based memory operations
+  • Question answering with context from stored memories
   • Multiple vectorstore support for different projects
-  • Contextual grounding for time/location-dependent memories
-  • Duplicate prevention and smart filtering
+  • Smart memory deletion by ID or description
+  • Natural conversation with reliable tool execution
 
 {colorize('CONFIGURATION:', Colors.BRIGHT_YELLOW)}
   • Requires OPENAI_API_KEY in environment or .env file
@@ -242,11 +242,11 @@ def main():
     # Get vectorstore name from user
     vectorstore_name = get_vectorstore_name()
 
-    section_header("🧠 Initializing LangGraph Memory Agent")
+    section_header("🧠 Initializing Memory Agent")
     info_print(f"Vectorset: {colorize(vectorstore_name, Colors.BRIGHT_BLUE)}")
     try:
         # Create the memory agent with specified vectorstore
-        agent = LangGraphMemoryAgent(vectorset_key=vectorstore_name)
+        agent = MemoryAgentChat(vectorset_key=vectorstore_name)
         success_print("Memory agent initialized successfully")
     except Exception as e:
         error_print(f"Failed to initialize memory agent: {e}")
@@ -267,12 +267,11 @@ def main():
         else:
             # Start interactive chat
             section_header(f"🧠 Memory Agent - Vectorset: {vectorstore_name}")
-            print("You can store and retrieve memories!")
+            print("Intelligent tool execution with natural conversation!")
             print("\nExamples:")
             print("- 'Remember that I like pizza'")
+            print("- 'Show me all my memories and delete any that aren't real preferences'")
             print("- 'What do I like to eat?'")
-            print("- 'Store this: I met John at the coffee shop'")
-            print("- 'Set context: I'm at home working on my laptop'")
             print(f"\nType {colorize('/help', Colors.BRIGHT_YELLOW)} for available commands")
             agent.chat()
 

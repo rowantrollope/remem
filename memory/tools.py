@@ -1,11 +1,12 @@
 """
 Memory tools for the LangGraph Memory Agent.
-Uses lean-core pattern: LangChain-Core interfaces with direct implementations.
+Standard LangChain tools for use with LangGraph's ToolNode.
 """
 
 from typing import Optional
 import json
 from pydantic import BaseModel, Field
+from langchain_core.tools import BaseTool
 
 
 # Memory Tools - Global memory agent instance will be set by the LangGraph agent
@@ -57,6 +58,7 @@ def search_memories(query: str, top_k: int = 10, filter_expr: str = None) -> str
         filter_expr: Optional filter expression for Redis VSIM command
 
     Returns:
+       
         JSON string containing list of relevant memories with metadata
     """
     if not _memory_agent:
@@ -338,10 +340,10 @@ def find_duplicate_memories(similarity_threshold: float = 0.9) -> str:
 
 
 def delete_memory(memory_id: str) -> str:
-    """Delete a specific memory by its ID.
+    """Delete a specific memory by its ID or by searching for matching memories.
 
     Args:
-        memory_id: The UUID of the memory to delete
+        memory_id: The UUID of the memory to delete, or a search query to find memories to delete
 
     Returns:
         Success message or error message
@@ -350,12 +352,41 @@ def delete_memory(memory_id: str) -> str:
         return "Error: Memory agent not initialized"
 
     try:
-        success = _memory_agent.delete_memory(memory_id)
-
-        if success:
-            return f"Successfully deleted memory with ID: {memory_id}"
-        else:
-            return f"Memory with ID {memory_id} not found or could not be deleted"
+        # First, try to delete by exact ID if it looks like a UUID
+        if len(memory_id) == 36 and memory_id.count('-') == 4:
+            success = _memory_agent.delete_memory(memory_id)
+            if success:
+                return f"Successfully deleted memory with ID: {memory_id}"
+            else:
+                return f"Memory with ID {memory_id} not found"
+        
+        # If not a UUID, treat as a search query to find memories to delete
+        # Search for memories matching the query
+        search_result = _memory_agent.search_memories(memory_id, top_k=10, min_similarity=0.5)
+        memories = search_result['memories']
+        
+        if not memories:
+            return f"No memories found matching '{memory_id}'"
+        
+        # If there's only one memory, delete it
+        if len(memories) == 1:
+            memory_to_delete = memories[0]
+            success = _memory_agent.delete_memory(memory_to_delete['id'])
+            if success:
+                return f"Successfully deleted memory: {memory_to_delete['text'][:100]}..."
+            else:
+                return f"Failed to delete memory with ID: {memory_to_delete['id']}"
+        
+        # If multiple memories found, return them for user to choose
+        response = f"Found {len(memories)} memories matching '{memory_id}':\n\n"
+        for i, memory in enumerate(memories[:5], 1):  # Show top 5
+            response += f"{i}. {memory['text'][:100]}...\n"
+            response += f"   ID: {memory['id']}\n"
+            response += f"   Relevance: {memory['score']*100:.1f}%\n\n"
+        
+        response += "To delete a specific memory, use its ID like: delete_memory('2fe50a39-ccb9-4a21-af2c-09e9b0d91472')"
+        return response
+        
     except Exception as e:
         return f"Error deleting memory: {str(e)}"
 
@@ -388,6 +419,9 @@ class StoreMemoryArgs(BaseModel):
     memory_text: str = Field(description="The memory text to store")
     apply_grounding: bool = Field(default=True, description="Whether to apply contextual grounding")
 
+class DeleteMemoryArgs(BaseModel): 
+    memory_id: str = Field(description="Memory ID (UUID) or search query to find memories to delete")
+    
 class SearchMemoriesArgs(BaseModel):
     query: str = Field(description="Search query text")
     top_k: int = Field(default=10, description="Number of top results to return")
@@ -401,51 +435,52 @@ class SetContextArgs(BaseModel):
 class GetMemoryStatsArgs(BaseModel):
     pass  # No arguments needed
 
-# Simple tool classes that provide the interface our agent expects
-class StoreMemoryTool:
-    name = "store_memory"
-    description = "Store a new memory with optional contextual grounding."
-    args_schema = StoreMemoryArgs
+class StoreMemoryTool(BaseTool):
+    name: str = "store_memory"
+    description: str = "Store a new memory with optional contextual grounding."
+    args_schema: type = StoreMemoryArgs
 
-    def invoke(self, args: dict) -> str:
-        memory_text = args.get("memory_text", "")
-        apply_grounding = args.get("apply_grounding", True)
+    def _run(self, memory_text: str, apply_grounding: bool = True) -> str:
         return store_memory(memory_text, apply_grounding)
 
-class SearchMemoriesTool:
-    name = "search_memories"
-    description = "Search for relevant memories using vector similarity."
-    args_schema = SearchMemoriesArgs
+class DeleteMemoryTool(BaseTool):
+    name: str = "delete_memory"
+    description: str = "Delete a memory by ID or search for memories to delete by description."
+    args_schema: type = DeleteMemoryArgs
 
-    def invoke(self, args: dict) -> str:
-        query = args.get("query", "")
-        top_k = args.get("top_k", 10)
-        filter_expr = args.get("filter_expr")
+    def _run(self, memory_id: str) -> str:
+        return delete_memory(memory_id)
+
+class SearchMemoriesTool(BaseTool):
+    name: str = "search_memories"
+    description: str = "Search for relevant memories using vector similarity."
+    args_schema: type = SearchMemoriesArgs
+
+    def _run(self, query: str, top_k: int = 10, filter_expr: Optional[str] = None) -> str:
         return search_memories(query, top_k, filter_expr)
 
-class SetContextTool:
-    name = "set_context"
-    description = "Set current context for memory grounding."
-    args_schema = SetContextArgs
+class SetContextTool(BaseTool):
+    name: str = "set_context"
+    description: str = "Set current context for memory grounding."
+    args_schema: type = SetContextArgs
 
-    def invoke(self, args: dict) -> str:
-        location = args.get("location")
-        activity = args.get("activity")
-        people = args.get("people")
+    def _run(self, location: Optional[str] = None, activity: Optional[str] = None, 
+             people: Optional[str] = None) -> str:
         return set_context(location, activity, people)
 
-class GetMemoryStatsTool:
-    name = "get_memory_stats"
-    description = "Get statistics about stored memories."
-    args_schema = GetMemoryStatsArgs
+class GetMemoryStatsTool(BaseTool):
+    name: str = "get_memory_stats"
+    description: str = "Get statistics about stored memories."
+    args_schema: type = GetMemoryStatsArgs
 
-    def invoke(self, args: dict) -> str:
+    def _run(self) -> str:
         return get_memory_stats()
 
-# List of available memory tools (using LangChain-Core BaseTool)
+# List of available memory tools (proper LangChain tools)
 AVAILABLE_TOOLS = [
     StoreMemoryTool(),
     SearchMemoriesTool(),
+    DeleteMemoryTool(),
     SetContextTool(),
-    GetMemoryStatsTool()
+    GetMemoryStatsTool(),
 ]
