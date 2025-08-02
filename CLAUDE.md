@@ -121,6 +121,58 @@ The system supports runtime configuration changes via API. Key configurable comp
 - ChatOpenAI model selection and parameters
 - Memory agent search and grounding settings
 
+## Memory Usage Instructions for Claude Code
+
+When working with this codebase, Claude Code has access to the REMEM-MEMORY system via MCP. Use these instructions for when and how to leverage memory capabilities.
+
+### Vectorstore Naming Convention
+- `claude:global` - Universal coding preferences, patterns, and cross-project insights
+- `claude:remem` - This project's specific context, decisions, and patterns
+- `claude:[project]` - Other project-specific contexts when working across codebases
+
+### When to Consult Memory
+
+**Session Start:**
+- Search `claude:global` for coding preferences and general patterns
+- Search `claude:remem` for project-specific context and previous decisions
+- Use findings to inform responses throughout the session
+
+**During Development:**
+- Before making architectural decisions, check for relevant prior context
+- When user mentions unfamiliar project concepts, search for background
+- For debugging, look for similar issues previously encountered
+- Balance utility with performance - use targeted searches
+
+### Memory Storage Strategy - Store Valuable Insights Only
+
+**What TO Store:**
+- User-stated preferences ("I prefer...", "Always use...", "Don't...")
+- Architecture decisions with clear rationale for this memory system
+- Complex problem solutions that could recur
+- Performance insights specific to Redis VectorSet or embeddings
+- Configuration patterns and their reasoning
+- Testing approaches that work well for this system
+
+**What NOT to Store:**
+- Routine development tasks or basic fixes
+- Standard Python/FastAPI patterns without project-specific context
+- Temporary debugging steps
+- Simple code explanations
+- Process descriptions without decision rationale
+
+**Storage Examples:**
+- ✅ "User prefers direct tool calling over LangChain agents for reliability"
+- ✅ "Redis VectorSet performs better with batch operations in this setup"
+- ❌ "Created a new endpoint" or "Fixed a typo"
+- ❌ "Explained how FastAPI routing works"
+
+### Best Practices
+1. **Be Selective:** Only store insights that improve future development
+2. **Focus on Decisions:** Prioritize architectural choices and user preferences
+3. **Project Context:** Remember this is both a memory tool AND a project using memory
+4. **Be Specific:** Include enough context for future reference
+5. **Stay Organized:** Use appropriate vectorstore names consistently
+
 ## Entry Points
 
 1. **CLI**: `python cli.py` - Interactive memory operations
