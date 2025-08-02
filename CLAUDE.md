@@ -52,44 +52,89 @@ cp .env.example .env
 ## Architecture Overview
 
 ### Core System
-- **memory/core.py**: Core memory operations with Redis VectorSet
-- **memory/agent.py**: Main memory agent with direct ChatOpenAI tool calling
-- **memory/tools.py**: LangChain tools for memory operations
-- **api/**: FastAPI web server with REST endpoints
+The architecture uses a layered modular design with clean separation of concerns:
+
+#### Memory Layer (`memory/`)
+- **core.py**: Redis VectorSet operations and low-level memory management
+- **core_agent.py**: Layered memory agent with processing, extraction, and reasoning
+- **agent.py**: ChatOpenAI-based conversational agent with direct tool calling
+- **tools.py**: LangChain tools for memory operations
+- **processing.py**: Memory data processing and transformation
+- **extraction.py**: Memory extraction from conversations
+- **reasoning.py**: Advanced reasoning operations
+- **async_processor.py**: Asynchronous memory processing capabilities
+
+#### API Layer (`api/`)
+- **app.py**: FastAPI application factory and configuration
+- **startup.py**: Application initialization and service setup
+- **dependencies.py**: Dependency injection for services
+- **routers/**: Modular API endpoints
+  - **memory.py**: Basic memory CRUD operations
+  - **klines.py**: K-line mental state operations (inspired by Minsky)
+  - **agent.py**: Full conversational agent with session management
+  - **config.py**: Runtime configuration management
+  - **health.py**: Health check endpoints
+- **services/**: Business logic layer
+  - **memory_service.py**: Memory operation orchestration
+  - **agent_service.py**: Agent conversation handling
+  - **config_service.py**: Configuration management
+- **models/**: Pydantic data models for API contracts
+- **core/**: Shared utilities, exceptions, and constants
+
+#### Application Entry Points
+- **web_app.py**: Main web API server (FastAPI)
 - **cli.py**: Command-line interface
-- **web_app.py**: Web API server entry point
 - **mcp_server.py**: Model Context Protocol server
 
-### Key Components
+#### Supporting Systems
+- **llm/**: LLM configuration and model management
+- **embedding/**: Embedding provider abstraction (OpenAI/Ollama)
+- **clients/**: External service integrations (LangCache)
+
+### Key Features
+- **Modular Architecture**: Clean separation between memory, API, and business logic layers
 - **Vector Storage**: Redis VectorSet for semantic similarity search
-- **Embeddings**: Configurable providers (OpenAI text-embedding-3-small, Ollama nomic-embed-text)
-- **Direct Tool Calling**: Clean, reliable tool execution with proper iteration limits
-- **Contextual Grounding**: Automatic resolution of relative time/location references
-- **Configuration Management**: Runtime configuration via API endpoints
+- **Configurable Embeddings**: Support for OpenAI and Ollama embedding providers
+- **K-lines Architecture**: Mental state construction inspired by Minsky's cognitive theory
+- **Session Management**: Persistent conversational context
+- **Async Processing**: Background memory operations
+- **Runtime Configuration**: Dynamic system reconfiguration via API
 
 ### Frontend
 - **Next.js application** in `frontend/` directory
 - **React components** with Radix UI and Tailwind CSS
 - **TypeScript** with comprehensive type definitions
+- **Real-time chat interface** with memory integration
 
 ## API Structure
 
 ### Memory Operations (require vectorstore_name path parameter)
 - `POST /api/memory/{vectorstore_name}` - Store memory
 - `POST /api/memory/{vectorstore_name}/search` - Search memories
-- `POST /api/memory/{vectorstore_name}/answer` - Answer questions with confidence
 - `GET /api/memory/{vectorstore_name}` - Get memory stats
-- `DELETE /api/memory/{vectorstore_name}/{memory_id}` - Delete memory
+- `DELETE /api/memory/{vectorstore_name}/{memory_id}` - Delete specific memory
+- `DELETE /api/memory/{vectorstore_name}/all` - Delete all memories
+- `POST /api/memory/{vectorstore_name}/context` - Store contextual memories
+- `GET /api/memory/{vectorstore_name}/context` - Get contextual information
 
-### Chat & K-lines
-- `POST /api/chat` - LangGraph conversational interface
-- `POST /api/klines/{vectorstore_name}/recall` - Mental state construction
-- `POST /api/klines/{vectorstore_name}/ask` - K-line reasoning
+### Agent Operations
+- `POST /api/agent/chat` - Full conversational agent with memory integration
+- `POST /api/agent/{vectorstore_name}/session` - Create new chat session
+- `GET /api/agent/{vectorstore_name}/session/{session_id}` - Get session details
+- `DELETE /api/agent/{vectorstore_name}/session/{session_id}` - Delete session
+- `GET /api/agent/{vectorstore_name}/sessions` - List all sessions
 
-### Configuration
+### K-lines Operations (Mental State Construction)
+- `POST /api/memory/{vectorstore_name}/ask` - K-line reasoning with confidence scoring
+
+### Configuration Management
 - `GET /api/config` - Get current configuration
 - `PUT /api/config` - Update configuration
 - `POST /api/config/test` - Test configuration changes
+- `POST /api/config/reload` - Reload configuration
+
+### Health & Monitoring
+- `GET /api/health` - System health check
 
 ## Testing
 
