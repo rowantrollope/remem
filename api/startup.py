@@ -3,7 +3,7 @@ Application startup logic and initialization.
 """
 
 import os
-from memory.agent import LangGraphMemoryAgent
+from memory.agent import MemoryAgentChat
 from memory.core_agent import MemoryAgent
 from llm.llm_manager import LLMManager, LLMConfig, init_llm_manager as initialize_llm_manager
 from .core.config import app_config
@@ -43,7 +43,7 @@ def init_llm_manager():
 
 
 def init_memory_agent():
-    """Initialize the LangGraph memory agent with current configuration."""
+    """Initialize the memory agent with current configuration."""
     try:
         # Create memory agent with current Redis configuration
         base_memory_agent = MemoryAgent(
@@ -54,8 +54,8 @@ def init_memory_agent():
             app_config=app_config
         )
 
-        # Create LangGraph agent with current OpenAI configuration
-        memory_agent = LangGraphMemoryAgent(
+        # Create memory agent chat with current OpenAI configuration
+        memory_agent = MemoryAgentChat(
             model_name=app_config["langgraph"]["model_name"],
             temperature=app_config["langgraph"]["temperature"],
             vectorset_key=app_config["redis"]["vectorset_key"]
@@ -69,7 +69,7 @@ def init_memory_agent():
 
         return True
     except Exception as e:
-        print(f"Failed to initialize LangGraph memory agent: {e}")
+        print(f"Failed to initialize memory agent: {e}")
         return False
 
 
@@ -90,7 +90,7 @@ def startup():
         print("❌ Failed to initialize LLM manager")
         raise RuntimeError("Failed to initialize LLM manager")
 
-    # Initialize LangGraph memory agent
+    # Initialize memory agent
     if init_memory_agent():
         print("✅ Memory agent ready")
         print("🌐 Server running at http://localhost:5001")

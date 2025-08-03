@@ -6,12 +6,12 @@ This MCP server exposes the remem memory system capabilities as standardized too
 that can be used by any MCP-compatible client (like Claude Desktop, IDEs, etc.).
 
 The server provides tools for:
-- Storing memories (Memories)
-- Searching memories
+- Storing memories with contextual grounding
+- Searching memories with vector similarity
+- Deleting memories by ID or clearing all
 - Getting memory statistics
-- Managing context
-- Advanced memory operations with k-lines
-- LangCache integration for caching tool responses
+- Managing context for grounding
+- Relevance scoring configuration
 """
 
 import os
@@ -40,8 +40,11 @@ load_dotenv()
 # Initialize FastMCP server
 mcp = FastMCP("remem-memory")
 
-# Global instances
-memory_agent: Optional[MemoryAgent] = None
+# Global instances - use dictionary to cache memory agents per vectorstore
+# This provides significant performance improvements by avoiding re-initialization
+# for repeated operations on the same vectorstore while still supporting
+# multiple vectorstores dynamically as needed by different Claude Code sessions
+memory_agents: dict[str, MemoryAgent] = {}
 langcache_client: Optional[LangCacheClient] = None
 
 def init_llm_manager() -> bool:
@@ -89,15 +92,38 @@ def init_langcache_client() -> bool:
         print(f"⚠️ Error initializing LangCache client: {e}", file=sys.stderr)
         return False
 
-def init_memory_agent(vectorstore_name: str) -> bool:
-    """Initialize the memory agent with proper error handling."""
-    global memory_agent
+def get_memory_agent(vectorstore_name: str) -> Optional[MemoryAgent]:
+    """Get or create a memory agent for the specified vectorstore.
+    
+    This function implements intelligent caching of memory agent instances to optimize
+    performance. Each vectorstore gets its own memory agent instance that is reused
+    across multiple tool calls. This is particularly important for Claude Code which
+    may make many sequential calls to the same vectorstore during a coding session.
+    
+    Args:
+        vectorstore_name: The name of the vectorstore to get/create an agent for
+        
+    Returns:
+        MemoryAgent instance or None if initialization fails
+    """
+    global memory_agents
+    
+    # Return cached instance if it exists - this avoids expensive re-initialization
+    # and maintains any state/context that may have been set on the agent
+    if vectorstore_name in memory_agents:
+        return memory_agents[vectorstore_name]
+    
     try:
-        memory_agent = MemoryAgent(vectorset_key=vectorstore_name)
-        return True
+        # Create new memory agent instance for this vectorstore
+        # The MemoryAgent constructor will handle Redis connection validation
+        # and embedding model initialization automatically
+        agent = MemoryAgent(vectorset_key=vectorstore_name)
+        memory_agents[vectorstore_name] = agent
+        print(f"✅ Initialized memory agent for vectorstore: {vectorstore_name}", file=sys.stderr)
+        return agent
     except Exception as e:
-        print(f"Error initializing memory agent: {e}", file=sys.stderr)
-        return False
+        print(f"❌ Error initializing memory agent for '{vectorstore_name}': {e}", file=sys.stderr)
+        return None
 
 def create_cache_key(func_name: str, **kwargs) -> str:
     """Create a cache key from function name and arguments."""
@@ -116,9 +142,6 @@ def cached_tool(operation_type: str = "mcp_tool"):
                 return await func(*args, **kwargs)
 
             try:
-                # Create cache key
-                cache_key = create_cache_key(func.__name__, **kwargs)
-
                 # Create a simple message format for LangCache
                 messages = [{"role": "user", "content": f"{func.__name__}: {json.dumps(kwargs, default=str)}"}]
 
@@ -148,26 +171,48 @@ def cached_tool(operation_type: str = "mcp_tool"):
 
 @mcp.tool()
 async def store_memory(
-    text: str,
+    content: str,
     vectorstore_name: str,
+    tags: str = "",
     apply_grounding: bool = True
 ) -> str:
-    """Store a new memory in the memory system.
+    """Store a new memory in the memory system with optional tagging.
+    
+    This tool stores memories with contextual grounding applied by default to improve
+    memory relevance and searchability. The grounding process enriches the memory
+    content with current context information to make future retrieval more accurate.
     
     Args:
-        text: The memory content to store
-        vectorstore_name: Name of the vectorstore to use
-        apply_grounding: Whether to apply contextual grounding
+        content: The memory content to store - this is the main information to remember
+        vectorstore_name: Name of the vectorstore to use (e.g., 'claude:global', 'claude:remem')
+        tags: Optional comma-separated tags to categorize the memory (e.g., 'preference,coding,style')
+        apply_grounding: Whether to apply contextual grounding to improve memory quality
+    
+    Returns:
+        Success message with memory ID or error description
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     print(f"🔍 MCP DEBUG: Storing memory with grounding={apply_grounding}", file=sys.stderr)
 
     try:
-        # Store the memory using the core agent
+        # Parse tags if provided and append them to the memory text
+        # The system will automatically extract these as tags during parsing
+        memory_text_with_tags = content
+        if tags:
+            tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+            if tag_list:
+                # Append tags in quotes so they get extracted as tags by _parse_memory_text
+                quoted_tags = ' '.join(f'"{tag}"' for tag in tag_list)
+                memory_text_with_tags = f"{content} {quoted_tags}"
+        
+        # Store the memory using the core agent with enhanced error handling
+        # The memory agent will handle embedding generation, grounding application,
+        # and storage in the Redis VectorSet automatically
         result = memory_agent.store_memory(
-            memory_text=text,
+            memory_text=memory_text_with_tags,
             apply_grounding=apply_grounding,
             vectorset_key=vectorstore_name
         )
@@ -201,17 +246,25 @@ async def search_memories(
     top_k: int = 5,
     min_similarity: float = 0.7
 ) -> str:
-    """Search for relevant memories using vector similarity.
+    """Search for relevant memories using advanced vector similarity with relevance scoring.
+    
+    This tool performs sophisticated memory search using vector embeddings combined with
+    relevance scoring that considers similarity, recency, and usage patterns. The search
+    results are ranked by a composite score that balances semantic similarity with
+    temporal and usage-based relevance factors.
     
     Args:
-        query: Search query text
-        top_k: Number of results to return
-        vectorstore_name: Name of the vectorstore to search
-        memory_type: Type of memories to search for
-        min_similarity: Minimum similarity threshold
+        query: Search query text - describe what you're looking for
+        vectorstore_name: Name of the vectorstore to search (e.g., 'claude:global', 'claude:remem')
+        top_k: Maximum number of results to return (1-20)
+        min_similarity: Minimum similarity threshold (0.0-1.0, higher = more strict)
+    
+    Returns:
+        Formatted search results with relevance scores and metadata
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
     
     try:
         # Search memories using the memory agent - now returns dict with memories and filtering info
@@ -265,13 +318,22 @@ async def search_memories(
 
 @mcp.tool()
 async def get_memory_stats(vectorstore_name: str) -> str:
-    """Get statistics about the memory system.
+    """Get comprehensive statistics about the memory system for a specific vectorstore.
+    
+    This tool provides detailed information about the memory system including memory
+    count, vector dimensions, embedding model configuration, and memory type breakdown.
+    This is particularly useful for understanding the current state of your memory
+    system and monitoring storage usage.
     
     Args:
-        vectorstore_name: Name of the vectorstore to get stats for
+        vectorstore_name: Name of the vectorstore to get stats for (e.g., 'claude:global', 'claude:remem')
+    
+    Returns:
+        Detailed statistics including memory count, vector dimensions, and configuration info
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
     
     try:
         # Get memory info using the core agent
@@ -304,84 +366,7 @@ async def get_memory_stats(vectorstore_name: str) -> str:
     except Exception as e:
         return f"Error getting memory stats: {str(e)}"
 
-@mcp.tool()
-@cached_tool(operation_type="question_answering")
-async def answer_question(
-    question: str,
-    vectorstore_name: str,
-    top_k: int = 5,
-    confidence_threshold: float = 0.7
-) -> str:
-    """Answer a question using the memory system with confidence scoring.
-    
-    Args:
-        question: The question to answer
-        top_k: Number of memories to consider
-        vectorstore_name: Name of the vectorstore to search
-        confidence_threshold: Minimum confidence threshold for answers
-    """
-    if not memory_agent:
-        return "Error: Memory agent not initialized"
-    
-    try:
-        # Use the memory agent's sophisticated question answering
-        result = memory_agent.answer_question(
-            question=question,
-            top_k=top_k
-        )
-        
-        if result.get('success'):
-            answer = result.get('answer', 'No answer generated')
-            confidence = result.get('confidence', 0)
-            memories_used = result.get('memories_used', 0)
-            
-            if confidence < confidence_threshold:
-                return f"Low confidence answer (confidence: {confidence:.2f}):\n{answer}\n\nBased on {memories_used} memories. Consider storing more relevant information."
-            else:
-                return f"Answer (confidence: {confidence:.2f}):\n{answer}\n\nBased on {memories_used} relevant memories."
-        else:
-            return f"Failed to answer question: {result.get('message', 'Unknown error')}"
-            
-    except Exception as e:
-        return f"Error answering question: {str(e)}"
 
-@mcp.tool()
-async def extract_and_store_memories(
-    conversation_text: str,
-    vectorstore_name: str,
-    apply_grounding: bool = True
-) -> str:
-    """Extract and store memories from a conversation or text.
-    
-    Args:
-        conversation_text: The text to extract memories from
-        vectorstore_name: Name of the vectorstore to store in
-        apply_grounding: Whether to apply contextual grounding
-    """
-    if not memory_agent:
-        return "Error: Memory agent not initialized"
-    
-    try:
-        # Extract and store memories using the core agent
-        result = memory_agent.extract_and_store_memories(
-            raw_input=conversation_text,
-            context_prompt="Extract important information from this conversation",
-            apply_grounding=apply_grounding
-        )
-        
-        if result.get('success'):
-            extracted_count = result.get('extracted_count', 0)
-            stored_count = result.get('stored_count', 0)
-            
-            if stored_count > 0:
-                return f"Successfully extracted and stored {stored_count} memories from {extracted_count} candidates."
-            else:
-                return "No new memories were extracted from the provided text."
-        else:
-            return f"Failed to extract memories: {result.get('message', 'Unknown error')}"
-            
-    except Exception as e:
-        return f"Error extracting memories: {str(e)}"
 
 @mcp.tool()
 async def set_context(
@@ -400,8 +385,9 @@ async def set_context(
         environment: Environmental context
         vectorstore_name: Name of the vectorstore
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     try:
         # Set context using the core agent (returns None)
@@ -438,8 +424,9 @@ async def get_context(vectorstore_name: str) -> str:
     Args:
         vectorstore_name: Name of the vectorstore
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     try:
         # Get context using the core agent's private method
@@ -468,69 +455,7 @@ async def get_context(vectorstore_name: str) -> str:
     except Exception as e:
         return f"Error getting context: {str(e)}"
 
-@mcp.tool()
-async def recall_with_klines(
-    query: str,
-    vectorstore_name: str,
-    top_k: int = 5,
-    use_advanced_filtering: bool = True
-) -> str:
-    """Advanced memory recall using k-lines for sophisticated reasoning.
 
-    Args:
-        query: Query for memory recall
-        top_k: Number of memories to recall
-        vectorstore_name: Name of the vectorstore
-        use_advanced_filtering: Whether to use LLM-based filtering
-    """
-    if not memory_agent:
-        return "Error: Memory agent not initialized"
-
-    try:
-        # Use recall_memories for advanced memory retrieval
-        result = memory_agent.recall_memories(
-            query=query,
-            top_k=top_k,
-            min_similarity=0.7
-        )
-
-        # result is already a formatted string from recall_memories
-        if result and result.strip():
-            return result
-        else:
-            return f"No relevant memories found for: '{query}'"
-
-    except Exception as e:
-        return f"Error in k-line recall: {str(e)}"
-
-@mcp.tool()
-async def get_cache_stats(
-) -> str:
-    """Get LangCache statistics and health information.
-
-    Returns:
-        Cache statistics including hit rate, total requests, and health status
-    """
-    if not langcache_client:
-        return "LangCache not initialized. Set LANGCACHE_HOST, LANGCACHE_API_KEY, and LANGCACHE_CACHE_ID environment variables."
-
-    try:
-        # Get cache statistics
-        stats = langcache_client.get_stats()
-
-        # Get health check
-        health = langcache_client.health_check()
-
-        result = {
-            "cache_stats": stats,
-            "health": health,
-            "cache_enabled": True
-        }
-
-        return json.dumps(result, indent=2)
-
-    except Exception as e:
-        return f"Error getting cache stats: {str(e)}"
 
 @mcp.tool()
 async def get_relevance_config(vectorstore_name: str) -> str:
@@ -539,14 +464,12 @@ async def get_relevance_config(vectorstore_name: str) -> str:
     Args:
         vectorstore_name: Name of the vectorstore to get config for
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     try:
-        # Initialize memory agent for the specific vectorstore if needed
-        if not init_memory_agent(vectorstore_name):
-            return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
-
+        # Use the already initialized memory agent from get_memory_agent above
         config = memory_agent.get_relevance_config()
 
         result = "Current Relevance Scoring Configuration:\n\n"
@@ -589,14 +512,11 @@ async def update_relevance_config(
         max_temporal_boost: Maximum boost from temporal factors
         max_usage_boost: Maximum boost from usage factors
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Error: Memory agent not initialized"
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     try:
-        # Initialize memory agent for the specific vectorstore if needed
-        if not init_memory_agent(vectorstore_name):
-            return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
-
         # Build update parameters (only include non-None values)
         update_params = {}
         if vector_weight is not None:
@@ -638,23 +558,6 @@ async def update_relevance_config(
     except Exception as e:
         return f"Error updating relevance config: {str(e)}"
 
-@mcp.tool()
-async def clear_cache_stats(
-) -> str:
-    """Clear LangCache statistics counters.
-
-    Returns:
-        Confirmation message
-    """
-    if not langcache_client:
-        return "LangCache not initialized."
-
-    try:
-        langcache_client.clear_stats()
-        return "Cache statistics cleared successfully."
-
-    except Exception as e:
-        return f"Error clearing cache stats: {str(e)}"
 
 @mcp.tool()
 async def delete_memory(
@@ -670,8 +573,9 @@ async def delete_memory(
     Returns:
         Confirmation message or error
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Memory agent not initialized."
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     try:
         success = memory_agent.delete_memory(memory_id, vectorset_key=vectorstore_name)
@@ -698,8 +602,9 @@ async def clear_all_memories(
     Returns:
         Confirmation message or error
     """
+    memory_agent = get_memory_agent(vectorstore_name)
     if not memory_agent:
-        return "Memory agent not initialized."
+        return f"Error: Could not initialize memory agent for vectorstore '{vectorstore_name}'"
 
     if not confirm:
         return "⚠️ This will delete ALL memories from the vectorstore. To confirm, call this tool with confirm=True"
@@ -717,32 +622,46 @@ async def clear_all_memories(
     except Exception as e:
         return f"Error clearing memories: {str(e)}"
 
-if __name__ == "__main__":
-    # Initialize the LLM manager first (required for grounding)
+def main() -> None:
+    """Main entry point for the Remem MCP Server.
+    
+    This function initializes all required components for the MCP server including
+    the LLM manager for contextual grounding, optional LangCache client for performance
+    optimization, and starts the MCP server with STDIO transport for Claude Desktop
+    integration.
+    
+    The server uses dynamic memory agent initialization, meaning memory agents are
+    created on-demand for each vectorstore as tools are called, rather than 
+    pre-initializing with a hardcoded vectorstore name.
+    """
+    # Initialize the LLM manager first - this is required for contextual grounding
+    # functionality which enhances memory storage quality by adding relevant context
     if not init_llm_manager():
-        print("Failed to initialize LLM manager", file=sys.stderr)
+        print("❌ Failed to initialize LLM manager - contextual grounding will be disabled", file=sys.stderr)
         sys.exit(1)
 
-    # Initialize the memory agent
-    if not init_memory_agent("augment:global"):
-        print("Failed to initialize memory agent", file=sys.stderr)
-        sys.exit(1)
-
-    # Initialize LangCache client (optional)
+    # Initialize LangCache client (optional) - this provides caching for expensive
+    # operations like memory search and question answering to improve performance
     init_langcache_client()
 
-    print("Remem MCP Server initialized successfully", file=sys.stderr)
-    print("Available tools:", file=sys.stderr)
-    print("  - store_memory: Store new memories with contextual grounding", file=sys.stderr)
-    print("  - search_memories: Search memories using vector similarity (cached)", file=sys.stderr)
-    print("  - get_memory_stats: Get memory system statistics", file=sys.stderr)
-    print("  - answer_question: Answer questions using memory with confidence scoring (cached)", file=sys.stderr)
-    print("  - extract_and_store_memories: Extract memories from conversations", file=sys.stderr)
-    print("  - set_context: Set contextual information for grounding", file=sys.stderr)
+    print("✅ Remem MCP Server initialized successfully", file=sys.stderr)
+    print("🔧 Available tools:", file=sys.stderr)
+    print("  - store_memory: Store new memories with contextual grounding and tagging", file=sys.stderr)
+    print("  - search_memories: Search memories using advanced vector similarity (cached)", file=sys.stderr)
+    print("  - get_memory_stats: Get comprehensive memory system statistics", file=sys.stderr)
+    print("  - set_context: Set contextual information for memory grounding", file=sys.stderr)
     print("  - get_context: Get current contextual information", file=sys.stderr)
-    print("  - recall_with_klines: Advanced memory recall with k-line reasoning", file=sys.stderr)
-    print("  - get_cache_stats: Get LangCache statistics and health information", file=sys.stderr)
-    print("  - clear_cache_stats: Clear LangCache statistics counters", file=sys.stderr)
+    print("  - delete_memory: Delete a specific memory by ID", file=sys.stderr)
+    print("  - clear_all_memories: Clear all memories from a vectorstore (with confirmation)", file=sys.stderr)
+    print("  - get_relevance_config: Get current relevance scoring configuration", file=sys.stderr)
+    print("  - update_relevance_config: Update relevance scoring parameters", file=sys.stderr)
+    print(f"📊 Memory agents will be initialized dynamically per vectorstore", file=sys.stderr)
+    print(f"🚀 Starting MCP server with STDIO transport...", file=sys.stderr)
 
-    # Run the MCP server
+    # Run the MCP server with STDIO transport - this is the standard method
+    # for integration with Claude Desktop and other MCP-compatible clients
     mcp.run(transport='stdio')
+
+
+if __name__ == "__main__":
+    main()

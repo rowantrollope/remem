@@ -171,15 +171,15 @@ The system supports runtime configuration changes via API. Key configurable comp
 When working with this codebase, Claude Code has access to the REMEM-MEMORY system via MCP. Use these instructions for when and how to leverage memory capabilities.
 
 ### Vectorstore Naming Convention
-- `claude:global` - Universal coding preferences, patterns, and cross-project insights
-- `claude:remem` - This project's specific context, decisions, and patterns
-- `claude:[project]` - Other project-specific contexts when working across codebases
+- `code_agent:global` - Universal coding preferences, patterns, and cross-project insights
+- `code_agent:remem` - This project's specific context, decisions, and patterns
+- `code_agent:[project]` - Other project-specific contexts when working across codebases
 
 ### When to Consult Memory
 
 **Session Start:**
-- Search `claude:global` for coding preferences and general patterns
-- Search `claude:remem` for project-specific context and previous decisions
+- Search `coding_memory:global` for coding preferences and general patterns
+- Search `coding_memory:remem` for project-specific context and previous decisions
 - Use findings to inform responses throughout the session
 
 **During Development:**
