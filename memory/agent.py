@@ -2,15 +2,14 @@
 """
 Memory Agent
 
-Clean, reliable memory agent using direct ChatOpenAI with tools.
+Clean, reliable memory agent using direct OpenAI SDK with function calling.
 """
 
 import os
-from typing import List
+import json
+from typing import List, Dict, Any
 from dotenv import load_dotenv
-
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from openai import OpenAI
 
 from .core_agent import MemoryAgent
 from .tools import AVAILABLE_TOOLS, set_memory_agent
@@ -23,16 +22,22 @@ load_dotenv()
 
 
 class MemoryAgentChat:
-    """Memory agent using direct ChatOpenAI with tools."""
+    """
+    Memory agent using direct OpenAI SDK approach.
+    
+    This implementation uses the OpenAI Python SDK directly with function calling
+    for maximum control, reliability, and performance.
+    """
     
     def __init__(self, model_name: str = "gpt-4o-mini", temperature: float = 0.1,
                  vectorset_key: str = None):
-        """Initialize the memory agent.
+        """
+        Initialize the memory agent with direct OpenAI SDK integration.
 
         Args:
-            model_name: OpenAI model to use
-            temperature: Temperature for the model
-            vectorset_key: Name of the vectorset to use (defaults to "memories")
+            model_name: OpenAI model to use for conversations
+            temperature: Temperature setting for response generation
+            vectorset_key: Name of the vectorset to use for memory storage
         """
         # Initialize the underlying memory agent
         self.memory_agent = MemoryAgent(vectorset_key=vectorset_key)
@@ -40,95 +45,163 @@ class MemoryAgentChat:
         # Set the global memory agent for tools
         set_memory_agent(self.memory_agent)
         
-        # Initialize ChatOpenAI with tools
-        self.llm = ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
-            api_key=os.getenv("OPENAI_API_KEY")
-        ).bind_tools(AVAILABLE_TOOLS)
+        # Initialize OpenAI client
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.model_name = model_name
+        self.temperature = temperature
         
         # Create tool mapping for execution
         self.tools_by_name = {tool.name: tool for tool in AVAILABLE_TOOLS}
+        
+        # Prepare tools for OpenAI function calling format
+        self.openai_tools = self._prepare_openai_tools()
         
         # Conversation history for context
         self.conversation_history = []
         self.max_history_length = 20  # Keep last 20 messages
     
+    def _prepare_openai_tools(self) -> List[Dict[str, Any]]:
+        """
+        Convert LangChain tools to OpenAI function calling format.
+        
+        Returns:
+            List of tool definitions in OpenAI format
+        """
+        openai_tools = []
+        
+        for tool in AVAILABLE_TOOLS:
+            # Extract schema from the tool
+            schema = tool.args_schema.schema() if tool.args_schema else {}
+            
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": schema.get("properties", {}),
+                        "required": schema.get("required", [])
+                    }
+                }
+            }
+            openai_tools.append(tool_def)
+        
+        return openai_tools
+    
     def _get_system_prompt(self) -> str:
-        """Get a clean, minimal system prompt."""
-        return """You are a helpful memory assistant with access to tools for managing memories.
+        """
+        Get a comprehensive system prompt for the memory agent.
+        
+        Returns:
+            System prompt string with clear instructions and capabilities
+        """
+        return """You are a helpful memory assistant with access to powerful memory management tools.
 
-Available tools:
-- search_memories: Find relevant memories using similarity search
-- store_memory: Store new memories (only when explicitly requested)
+Available tools and their purposes:
+- search_memories: Find relevant memories using semantic similarity search
+- store_memory: Store new memories with optional contextual grounding
 - delete_memory: Delete memories by ID or search description
-- set_context: Set current context for memory grounding
-- get_memory_stats: Get memory system statistics
+- set_context: Set current context for memory grounding (location, activity, people)
+- get_memory_stats: Get memory system statistics and information
 
-Guidelines:
-- Search memories first to understand what you know about the user
-- Use tools as needed to help the user
-- Be natural and conversational
+Core Guidelines:
+- Always search memories first to understand what you know about the user
+- Use tools intelligently to help the user manage their memories
+- Be natural and conversational in your responses
 - When showing memories to users, include memory IDs for reference
+- Apply contextual grounding when storing memories to improve future retrieval
+- Provide confidence scores and reasoning when answering questions
 
-You can handle complex requests by using multiple tools in sequence."""
+Advanced Capabilities:
+- Multi-step reasoning using multiple tool calls in sequence
+- Intelligent duplicate detection and memory cleanup
+- Context-aware memory storage with grounding
+- Sophisticated search with relevance scoring
+- Memory extraction from conversational data
+
+You can handle complex requests by using multiple tools in sequence to provide
+comprehensive and accurate responses."""
     
     def run(self, user_input: str, max_iterations: int = 5) -> str:
-        """Run the agent with user input.
+        """
+        Process user input using OpenAI function calling with memory tools.
 
         Args:
-            user_input: The user's message
+            user_input: The user's message or question
             max_iterations: Maximum number of tool calling iterations
 
         Returns:
-            The agent's response
+            The agent's final response
         """
-        # Create user message
-        user_message = HumanMessage(content=user_input)
-        
-        # Build messages list with conversation history
+        # Create messages list with conversation history
         messages = []
         
         # Add system message
-        system_msg = SystemMessage(content=self._get_system_prompt())
-        messages.append(system_msg)
+        messages.append({
+            "role": "system", 
+            "content": self._get_system_prompt()
+        })
         
         # Include recent conversation history
         recent_history = self.conversation_history[-self.max_history_length:]
-        messages.extend(recent_history)
+        for msg in recent_history:
+            messages.append(msg)
         
         # Add current user message
+        user_message = {"role": "user", "content": user_input}
         messages.append(user_message)
         
-        # Iterate with tool calling
+        # Process with function calling iterations
         for iteration in range(max_iterations):
             try:
-                # Call the model
-                response = self.llm.invoke(messages)
-                messages.append(response)
+                # Call OpenAI with tools
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    tools=self.openai_tools,
+                    tool_choice="auto",
+                    temperature=self.temperature
+                )
+                
+                assistant_message = response.choices[0].message
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_message.content,
+                    "tool_calls": assistant_message.tool_calls
+                })
                 
                 # Check if there are tool calls
-                if hasattr(response, 'tool_calls') and response.tool_calls:
-                    # Execute tools
-                    tool_messages = self._execute_tools(response.tool_calls)
-                    messages.extend(tool_messages)
+                if assistant_message.tool_calls:
+                    # Execute tools and add tool messages
+                    for tool_call in assistant_message.tool_calls:
+                        tool_result = self._execute_tool(tool_call)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": tool_result
+                        })
                     # Continue to next iteration
                 else:
-                    # No tool calls, we're done
-                    final_response = response.content
+                    # No tool calls, we have our final response
+                    final_response = assistant_message.content
                     break
+                    
             except Exception as e:
-                error_response = f"Error: {str(e)}"
+                error_response = f"Error during processing: {str(e)}"
                 final_response = error_response
                 break
         else:
             # Hit max iterations
-            final_response = "I apologize, but I reached the maximum number of tool iterations. Please try a simpler request."
+            final_response = "I apologize, but I reached the maximum number of processing iterations. Please try a simpler request."
         
         # Update conversation history (only user message and final AI response)
         self.conversation_history.append(user_message)
         if final_response:
-            self.conversation_history.append(AIMessage(content=final_response))
+            self.conversation_history.append({
+                "role": "assistant", 
+                "content": final_response
+            })
         
         # Trim conversation history
         if len(self.conversation_history) > self.max_history_length:
@@ -136,57 +209,49 @@ You can handle complex requests by using multiple tools in sequence."""
         
         return final_response or "I apologize, but I couldn't generate a response."
     
-    def _execute_tools(self, tool_calls) -> List[ToolMessage]:
-        """Execute tool calls and return tool messages."""
-        tool_messages = []
+    def _execute_tool(self, tool_call) -> str:
+        """
+        Execute a single tool call and return the result.
+
+        Args:
+            tool_call: OpenAI tool call object
+
+        Returns:
+            String result of the tool execution
+        """
+        tool_name = tool_call.function.name
+        tool_args = json.loads(tool_call.function.arguments)
         
-        for tool_call in tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call.get("args", {})
-            tool_call_id = tool_call.get("id", tool_name)
-            
-            if tool_name in self.tools_by_name:
-                try:
-                    tool = self.tools_by_name[tool_name]
-                    result = tool._run(**tool_args)
-                    
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call_id
-                    )
-                    tool_messages.append(tool_message)
-                    
-                except Exception as e:
-                    error_message = ToolMessage(
-                        content=f"Error executing {tool_name}: {str(e)}",
-                        tool_call_id=tool_call_id
-                    )
-                    tool_messages.append(error_message)
-            else:
-                error_message = ToolMessage(
-                    content=f"Unknown tool: {tool_name}",
-                    tool_call_id=tool_call_id
-                )
-                tool_messages.append(error_message)
-        
-        return tool_messages
+        if tool_name in self.tools_by_name:
+            try:
+                tool = self.tools_by_name[tool_name]
+                result = tool._run(**tool_args)
+                return str(result)
+            except Exception as e:
+                return f"Error executing {tool_name}: {str(e)}"
+        else:
+            return f"Unknown tool: {tool_name}"
     
     def show_help(self):
-        """Display help information for the memory agent."""
+        """
+        Display comprehensive help information for the memory agent.
+        """
         help_text = f"""
-{colorize('🧠 Memory Agent - Help', Colors.BRIGHT_CYAN)}
-{colorize('=' * 50, Colors.GRAY)}
+{colorize('🧠 OpenAI Memory Agent - Help', Colors.BRIGHT_CYAN)}
+{colorize('=' * 60, Colors.GRAY)}
 
 {colorize('BASIC USAGE:', Colors.BRIGHT_YELLOW)}
-  • Ask questions about your preferences and stored information
+  • Ask questions about your stored information and preferences
   • Store information by asking me to remember something
   • Delete memories by description or ID
+  • Set context for better memory organization
 
 {colorize('EXAMPLE CONVERSATIONS:', Colors.BRIGHT_YELLOW)}
-  {colorize('remem>', Colors.CYAN)} "Remember that I prefer 4-space indentation"
-  {colorize('remem>', Colors.CYAN)} "What coding style do I prefer?"
-  {colorize('remem>', Colors.CYAN)} "Show me all my memories"
-  {colorize('remem>', Colors.CYAN)} "Delete memories about code style"
+  {colorize('remem>', Colors.CYAN)} "Remember that I prefer detailed comments above functions"
+  {colorize('remem>', Colors.CYAN)} "What coding preferences do I have?"
+  {colorize('remem>', Colors.CYAN)} "Show me all my memories about travel"
+  {colorize('remem>', Colors.CYAN)} "Delete memories about old projects"
+  {colorize('remem>', Colors.CYAN)} "Set context: I'm working from home on the Redis project"
 
 {colorize('SPECIAL COMMANDS:', Colors.BRIGHT_YELLOW)}
   {colorize('/help', Colors.WHITE)}       - Show this help message
@@ -196,18 +261,27 @@ You can handle complex requests by using multiple tools in sequence."""
   {colorize('/clear', Colors.WHITE)}      - Clear conversation history
   {colorize('quit', Colors.WHITE)}        - Exit the program (or Ctrl+C)
 
-{colorize('MEMORY FEATURES:', Colors.BRIGHT_YELLOW)}
-  • {colorize('Intelligent Tool Use:', Colors.GREEN)} Reliable tool calling with proper iteration limits
-  • {colorize('Contextual Search:', Colors.GREEN)} Finds relevant memories for your questions
-  • {colorize('Smart Deletion:', Colors.GREEN)} Can delete by description or ID
-  • {colorize('Natural Conversation:', Colors.GREEN)} Direct, clean implementation
+{colorize('ADVANCED FEATURES:', Colors.BRIGHT_YELLOW)}
+  • {colorize('OpenAI Function Calling:', Colors.GREEN)} Direct tool integration with reliable execution
+  • {colorize('Contextual Grounding:', Colors.GREEN)} Memories include context for better retrieval
+  • {colorize('Smart Search:', Colors.GREEN)} Semantic similarity with relevance scoring
+  • {colorize('Multi-step Reasoning:', Colors.GREEN)} Complex queries handled automatically
+  • {colorize('Memory Management:', Colors.GREEN)} Intelligent storage and duplicate detection
 
-{colorize('=' * 50, Colors.GRAY)}
+{colorize('ARCHITECTURE:', Colors.BRIGHT_YELLOW)}
+  • Built on OpenAI SDK for maximum reliability
+  • Direct function calling without framework abstractions
+  • Redis VectorSet for high-performance semantic search
+  • Configurable embedding providers (OpenAI/Ollama)
+
+{colorize('=' * 60, Colors.GRAY)}
 """
         print(help_text)
     
     def show_stats(self):
-        """Show memory system statistics."""
+        """
+        Show memory system statistics with enhanced formatting.
+        """
         try:
             info = self.memory_agent.get_memory_info()
 
@@ -224,6 +298,8 @@ You can handle complex requests by using multiple tools in sequence."""
             redis_info = f"{info['redis_host']}:{info['redis_port']}"
             print(f"Redis: {colorize(redis_info, Colors.GRAY)}")
             print(f"Last Updated: {colorize(info['timestamp'][:19], Colors.GRAY)}")
+            print(f"OpenAI Model: {colorize(self.model_name, Colors.BRIGHT_BLUE)}")
+            print(f"Temperature: {colorize(str(self.temperature), Colors.BRIGHT_BLUE)}")
 
             if 'note' in info:
                 print(f"ℹ️  Note: {info['note']}")
@@ -232,22 +308,31 @@ You can handle complex requests by using multiple tools in sequence."""
             error_print(f"Failed to get memory statistics: {e}")
     
     def get_user_profile_summary(self) -> str:
-        """Get a comprehensive summary of what the agent knows about the user."""
+        """
+        Get a comprehensive summary of what the agent knows about the user.
+        
+        Returns:
+            Formatted user profile summary
+        """
         # Delegate to the underlying memory agent
-        return self.memory_agent.get_user_profile_summary() if hasattr(self.memory_agent, 'get_user_profile_summary') else "Profile summary not available"
+        if hasattr(self.memory_agent, 'get_user_profile_summary'):
+            return self.memory_agent.get_user_profile_summary()
+        else:
+            return "Profile summary not available"
     
     def clear_conversation_history(self):
-        """Clear the conversation history to start fresh."""
+        """
+        Clear the conversation history to start fresh.
+        """
         self.conversation_history = []
         info_print("Conversation history cleared")
     
     def switch_vectorstore(self):
-        """Switch to a different vectorstore."""
+        """
+        Switch to a different vectorstore with user selection.
+        """
         try:
             # Import the vectorstore selection function
-            import sys
-            import os
-            sys.path.append(os.path.dirname(os.path.dirname(__file__)))
             from cli import get_vectorstore_name
 
             print(f"\n{colorize('Current vectorstore:', Colors.BRIGHT_CYAN)} {self.memory_agent.core.VECTORSET_KEY}")
@@ -278,13 +363,15 @@ You can handle complex requests by using multiple tools in sequence."""
             print("Continuing with current vectorstore.")
     
     def chat(self):
-        """Start an interactive chat session."""
-        section_header("Memory Agent Chat")
-        print("Intelligent tool execution with natural conversation!")
+        """
+        Start an interactive chat session with the OpenAI memory agent.
+        """
+        section_header("OpenAI Memory Agent Chat")
+        print("Powered by OpenAI SDK with direct function calling!")
         print("\nExamples:")
-        print("- 'Remember that I like pizza'")
-        print("- 'What do I like to eat?'")
-        print("- 'Show me all my memories and delete any that aren't real preferences'")
+        print("- 'Remember that I prefer detailed comments above functions'")
+        print("- 'What do I know about my coding preferences?'")
+        print("- 'Show me all memories about this project and summarize them'")
         print(f"\nType {colorize('/help', Colors.BRIGHT_YELLOW)} for available commands")
 
         try:
@@ -327,7 +414,7 @@ You can handle complex requests by using multiple tools in sequence."""
                         self.clear_conversation_history()
                         continue
 
-                    # Regular conversation - let the agent handle everything
+                    # Regular conversation - use OpenAI function calling
                     response = self.run(user_input)
                     formatted_response = format_user_response(response)
                     print(formatted_response)

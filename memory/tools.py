@@ -1,15 +1,39 @@
 """
-Memory tools for the LangGraph Memory Agent.
-Standard LangChain tools for use with LangGraph's ToolNode.
+Memory tools for the OpenAI Memory Agent.
+Direct function implementations for OpenAI function calling.
 """
 
 from typing import Optional
 import json
 from pydantic import BaseModel, Field
-from langchain_core.tools import BaseTool
 
 
-# Memory Tools - Global memory agent instance will be set by the LangGraph agent
+class BaseTool:
+    """
+    Simple base tool class to replace LangChain's BaseTool.
+    
+    This is a lightweight replacement for LangChain's BaseTool that provides
+    the same interface for tool execution without external dependencies.
+    """
+    name: str = ""
+    description: str = ""
+    args_schema: type = None
+    
+    def _run(self, *args, **kwargs):
+        """
+        Execute the tool with the given arguments.
+        
+        Args:
+            *args: Positional arguments
+            **kwargs: Keyword arguments
+            
+        Returns:
+            Tool execution result
+        """
+        raise NotImplementedError("Tool must implement _run method")
+
+
+# Memory Tools - Global memory agent instance will be set by the OpenAI agent
 _memory_agent = None
 
 def set_memory_agent(agent):
@@ -476,7 +500,7 @@ class GetMemoryStatsTool(BaseTool):
     def _run(self) -> str:
         return get_memory_stats()
 
-# List of available memory tools (proper LangChain tools)
+# List of available memory tools (OpenAI function calling compatible)
 AVAILABLE_TOOLS = [
     StoreMemoryTool(),
     SearchMemoriesTool(),

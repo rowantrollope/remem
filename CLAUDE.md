@@ -57,8 +57,8 @@ The architecture uses a layered modular design with clean separation of concerns
 #### Memory Layer (`memory/`)
 - **core.py**: Redis VectorSet operations and low-level memory management
 - **core_agent.py**: Layered memory agent with processing, extraction, and reasoning
-- **agent.py**: ChatOpenAI-based conversational agent with direct tool calling
-- **tools.py**: LangChain tools for memory operations
+- **agent.py**: OpenAI SDK-based conversational agent with direct function calling
+- **tools.py**: OpenAI function calling tools for memory operations
 - **processing.py**: Memory data processing and transformation
 - **extraction.py**: Memory extraction from conversations
 - **reasoning.py**: Advanced reasoning operations
@@ -191,25 +191,26 @@ When working with this codebase, Claude Code has access to the REMEM-MEMORY syst
 ### Memory Storage Strategy - Store Valuable Insights Only
 
 **What TO Store:**
-- User-stated preferences ("I prefer...", "Always use...", "Don't...")
-- Architecture decisions with clear rationale for this memory system
-- Complex problem solutions that could recur
-- Performance insights specific to Redis VectorSet or embeddings
-- Configuration patterns and their reasoning
-- Testing approaches that work well for this system
+- User-stated preferences ONLY ("I prefer...", "Always use...", "Don't...")
+- Specific architectural decisions the user has made for this project
+- Performance insights discovered through actual implementation work
+- Configuration choices the user has explicitly selected
+- User-requested coding patterns or standards
 
 **What NOT to Store:**
-- Routine development tasks or basic fixes
-- Standard Python/FastAPI patterns without project-specific context
-- Temporary debugging steps
-- Simple code explanations
-- Process descriptions without decision rationale
+- Explanations or educational content provided to the user
+- Comparisons between technologies (unless user chose one)
+- Code reviews, bug fixes, or routine development work
+- Standard patterns without explicit user preference
+- Process descriptions or how-to information
+- General technical knowledge or framework explanations
 
 **Storage Examples:**
-- ✅ "User prefers direct tool calling over LangChain agents for reliability"
-- ✅ "Redis VectorSet performs better with batch operations in this setup"
-- ❌ "Created a new endpoint" or "Fixed a typo"
-- ❌ "Explained how FastAPI routing works"
+- ✅ "User prefers detailed comments above each function" (explicit preference)
+- ✅ "User chose Redis VectorSet over alternatives for performance reasons" (user decision)
+- ❌ "Explained OpenAI SDK vs LangGraph differences" (educational content)
+- ❌ "Provided comparison between agent architectures" (explanation)
+- ❌ "Fixed type errors in memory module" (routine work)
 
 ### Best Practices
 1. **Be Selective:** Only store insights that improve future development
